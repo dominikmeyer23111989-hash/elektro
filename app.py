@@ -2,6 +2,7 @@ import streamlit as st
 from supabase import create_client, Client
 from datetime import date
 from modules.mitarbeiter import render_mitarbeiter_verwaltung, ALL_MODULES
+from modules.antraege import render_antraege_modul
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
@@ -158,14 +159,12 @@ def render_mein_profil(supabase):
     user = st.session_state.get("user_data")
     user_id = user["id"]
 
-    # Aktuelle Daten frisch aus der Datenbank laden
     try:
         res = supabase.table("mitarbeiter").select("*, rollen(bezeichnung)").eq("id", user_id).execute()
         current_data = res.data[0] if res.data else {}
     except Exception:
         current_data = {}
 
-    # --- ANSICHT: Aktuelle Stammdaten (Read-Only Übersicht) ---
     st.markdown("### 📋 Ihre aktuellen Stammdaten")
     
     col_a, col_b, col_c = st.columns(3)
@@ -179,7 +178,6 @@ def render_mein_profil(supabase):
 
     tab_ansicht, tab_daten, tab_passwort = st.tabs(["👁️ Daten anzeigen", "📝 Daten bearbeiten", "🔒 Passwort / PIN ändern"])
 
-    # --- TAB 1: Reine Ansicht ---
     with tab_ansicht:
         st.markdown("#### Ihre hinterlegten Kontaktdaten")
         st.write(f"**Vorname:** {current_data.get('vorname', '-')}")
@@ -190,7 +188,6 @@ def render_mein_profil(supabase):
         st.write(f"**Geburtsdatum:** {current_data.get('geburtsdatum', '-')}")
         st.write(f"**Tätig seit:** {current_data.get('taetig_seit', '-')}")
 
-    # --- TAB 2: Kontaktdaten bearbeiten ---
     with tab_daten:
         with st.form("profil_daten_form"):
             st.markdown("#### Kontaktdaten anpassen")
@@ -213,8 +210,6 @@ def render_mein_profil(supabase):
                         "adresse": new_adresse
                     }
                     supabase.table("mitarbeiter").update(update_payload).eq("id", user_id).execute()
-                    
-                    # Session State aktualisieren
                     st.session_state["user_data"]["name"] = f"{new_vorname} {new_nachname}".strip()
                     
                     st.success("✅ Ihre Daten wurden erfolgreich angepasst!")
@@ -222,7 +217,6 @@ def render_mein_profil(supabase):
                 except Exception as e:
                     st.error(f"Fehler beim Speichern der Daten: {e}")
 
-    # --- TAB 3: Passwort / PIN ändern ---
     with tab_passwort:
         with st.form("profil_passwort_form"):
             st.markdown("#### Passwort / PIN ändern")
@@ -298,6 +292,8 @@ def render_app():
         if selected_main:
             if selected_main == "1":
                 render_mitarbeiter_verwaltung(supabase)
+            elif selected_main == "4":
+                render_antraege_modul(supabase)
             else:
                 st.title(available_menus[selected_main])
                 st.info("Dieses Modul wird als Nächstes ausgebaut.")

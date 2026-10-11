@@ -4,24 +4,25 @@ import pandas as pd
 
 def render_zeiterfassung(supabase):
     st.title("⏱️ 3. Zeiterfassung & Arbeitszeiten")
-    st.caption("Erfassen Sie Ihre Arbeitszeit per Klick. Die Soll-Stunden sind direkt aus Ihrer Personalakte hinterlegt.")
+    st.caption("Erfassen Sie Ihre Arbeitszeit per Klick. Die Soll-Stunden und individuellen Pausen sind aus Ihrer Personalakte hinterlegt.")
 
     user = st.session_state.get("user_data", {})
     user_id = user.get("id")
     is_admin = user.get("rolle") in ["Admin", "Bauleiter", "Büro / Verwaltung"]
 
-    # 1. Mitarbeiter-Sollstunden aus Modul 1 laden
+    # 1. Mitarbeiter-Stammdaten (Wochenstunden & individuelle Standard-Pause) aus Modul 1 laden
     try:
-        ma_res = supabase.table("mitarbeiter").select("wochenstunden, vorname, nachname, mitarbeiternummer").eq("id", user_id).execute()
+        ma_res = supabase.table("mitarbeiter").select("wochenstunden, standard_pause_minuten, vorname, nachname, mitarbeiternummer").eq("id", user_id).execute()
         ma_data = ma_res.data[0] if ma_res.data else {}
         wochenstunden = float(ma_data.get("wochenstunden", 40.0))
+        standard_pause = int(ma_data.get("standard_pause_minuten") or 30)
     except Exception:
         wochenstunden = 40.0
+        standard_pause = 30
 
-    # Tägliche Sollstunden (bei 5-Tage-Woche) oder anteilig
     tages_soll = wochenstunden / 5.0
 
-    # 2. Aktuellen Stempel-Status des Users prüfen (gibt es einen offenen Eintrag ohne Ausstempeln?)
+    # 2. Aktuellen Stempel-Status des Users prüfen
     try:
         offen_res = supabase.table("zeiterfassung").select("*").eq("mitarbeiter_id", user_id).is_("ausstempeln", "null").execute()
         offener_eintrag = offen_res.data[0] if offen_res.data else None
@@ -29,12 +30,13 @@ def render_zeiterfassung(supabase):
         offener_eintrag = None
 
     # Oben: Metriken anzeigen
-    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     col_m1.metric("Wochenstunden (Soll)", f"{wochenstunden} Std.")
     col_m2.metric("Tägliches Soll", f"{tages_soll:.1f} Std.")
+    col_m3.metric("Ihre Standard-Pause", f"{standard_pause} Min.")
     
     status_text = "🟢 Eingestempelt seit " + datetime.fromisoformat(offener_eintrag["einstempeln"]).strftime("%H:%M Uhr") if offener_eintrag else "🔴 Ausgestempelt"
-    col_m3.metric("Aktueller Status", status_text)
+    col_m4.metric("Aktueller Status", status_text)
 
     st.markdown("---")
 
@@ -67,7 +69,8 @@ def render_zeiterfassung(supabase):
                 st.success(f"Eingestempelt um: {datetime.fromisoformat(offener_eintrag['einstempeln']).strftime('%H:%M:%S Uhr')}")
                 
                 with st.form("ausstempeln_form"):
-                    pause = st.number_input("Pause (in Minuten)", min_value=0, max_value=180, value=30, step=5)
+                    # Die in der Mitarbeiterverwaltung festgelegte individuelle Standard-Pause wird automatisch voreingestellt!
+                    pause = st.number_input("Pause (in Minuten)", min_value=0, max_value=180, value=standard_pause, step=5)
                     notiz = st.text_input("Tätigkeitsnotiz / Baustelle (optional)")
                     
                     if st.form_submit_button("🔴 Jetzt Ausstempeln", type="primary", use_container_width=True):
@@ -85,10 +88,10 @@ def render_zeiterfassung(supabase):
 
         with col_s2:
             st.subheader("💡 Hinweise zur Zeiterfassung")
-            st.markdown("""
-            - Das System erfasst Ihre Arbeitszeit minutengenau.
-            - Pausenzeiten werden beim Ausstempeln automatisch von der Gesamtdauer abgezogen.
-            - Die Soll-Stunden basieren auf den in der **Mitarbeiterverwaltung** für Sie hinterlegten Wochenstunden.
+            st.markdown(f"""
+            - Ihre **individuelle Standard-Pause** ist auf **{standard_pause} Minuten** eingestellt und wird beim Ausstempeln automatisch vorgeschlagen.
+            - Sie können den Pausenwert vor dem Ausstempeln jederzeit anpassen, falls an einem Tag länger oder kürzer pausiert wurde.
+            - Die Soll-Stunden basieren auf den in Ihrer Personalakte hinterlegten Wochenstunden.
             """)
 
     # --- TAB 2: Historie & Ist/Soll-Vergleich ---

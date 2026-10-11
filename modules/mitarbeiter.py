@@ -151,7 +151,7 @@ def render_mitarbeiter_verwaltung(supabase):
                 st.dataframe(display_df, use_container_width=True)
                 
                 st.markdown("---")
-                st.subheader("⚙️ Mitarbeiter-Details, Kontingente & Status bearbeiten")
+                st.subheader("⚙️ Mitarbeiter-Details, Kontingente & Arbeitszeitmodell bearbeiten")
                 
                 selected_ma_id = st.selectbox(
                     "Mitarbeiter auswählen", 
@@ -167,20 +167,37 @@ def render_mitarbeiter_verwaltung(supabase):
                     col_e1, col_e2 = st.columns(2)
                     with col_e1:
                         neuer_urlaub = st.number_input("Urlaubstage pro Jahr", min_value=0, max_value=60, value=int(selected_ma.get("urlaubstage_gesamt") or 30))
-                        neue_wochenstunden = st.number_input("Wochenstunden (für Zeiterfassung)", min_value=0.0, max_value=60.0, value=float(selected_ma.get("wochenstunden") or 40.0), step=0.5)
-                    with col_e2:
                         neue_pause = st.number_input("Standard-Pause (Minuten)", min_value=0, max_value=120, value=int(selected_ma.get("standard_pause_minuten") or 30), step=5)
+                    with col_e2:
                         neuer_status = st.checkbox("Account ist aktiv (Login erlaubt)", value=selected_ma.get("ist_aktiv", True))
+
+                    st.markdown("##### 📅 Tägliche Soll-Stunden (Wochenmodell)")
+                    st.caption("Legen Sie fest, wie viele Stunden an welchem Wochentag regulär gearbeitet werden (z. B. Freitags kürzer).")
                     
-                    if st.form_submit_button("Stammdaten aktualisieren", type="primary", use_container_width=True):
+                    col_w1, col_w2, col_w3, col_w4, col_w5 = st.columns(5)
+                    soll_mo = col_w1.number_input("Mo", 0.0, 12.0, float(selected_ma.get("soll_mo", 8.0)), 0.5)
+                    soll_di = col_w2.number_input("Di", 0.0, 12.0, float(selected_ma.get("soll_di", 8.0)), 0.5)
+                    soll_mi = col_w3.number_input("Mi", 0.0, 12.0, float(selected_ma.get("soll_mi", 8.0)), 0.5)
+                    soll_do = col_w4.number_input("Do", 0.0, 12.0, float(selected_ma.get("soll_do", 8.0)), 0.5)
+                    soll_fr = col_w5.number_input("Fr", 0.0, 12.0, float(selected_ma.get("soll_fr", 6.0)), 0.5)
+
+                    berechnete_wochenstunden = soll_mo + soll_di + soll_mi + soll_do + soll_fr
+                    st.info(f"Ergeben automatisch **{berechnete_wochenstunden} Wochenstunden**")
+                    
+                    if st.form_submit_button("Stammdaten & Arbeitszeiten aktualisieren", type="primary", use_container_width=True):
                         try:
                             supabase.table("mitarbeiter").update({
                                 "urlaubstage_gesamt": neuer_urlaub,
-                                "wochenstunden": neue_wochenstunden,
+                                "wochenstunden": berechnete_wochenstunden,
                                 "standard_pause_minuten": neue_pause,
-                                "ist_aktiv": neuer_status
+                                "ist_aktiv": neuer_status,
+                                "soll_mo": soll_mo,
+                                "soll_di": soll_di,
+                                "soll_mi": soll_mi,
+                                "soll_do": soll_do,
+                                "soll_fr": soll_fr
                             }).eq("id", selected_ma_id).execute()
-                            st.success("Stammdaten erfolgreich aktualisiert!")
+                            st.success("Stammdaten & Arbeitszeitmodell erfolgreich aktualisiert!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler: {e}")
@@ -215,7 +232,6 @@ def render_mitarbeiter_verwaltung(supabase):
                 geburtsdatum = st.date_input("Geburtsdatum", value=date(1990, 1, 1), format="DD.MM.YYYY")
                 taetig_seit = st.date_input("Im Unternehmen tätig seit", value=date.today(), format="DD.MM.YYYY")
                 urlaubstage = st.number_input("Urlaubstage pro Jahr", value=30, min_value=0, max_value=60)
-                wochenstunden = st.number_input("Wochenstunden", value=40.0, min_value=0.0, max_value=60.0, step=0.5)
                 standard_pause = st.number_input("Standard-Pause pro Schicht (Minuten)", value=30, min_value=0, max_value=120, step=5)
             with col2:
                 rolle_bezeichnung = st.selectbox("Rolle / Funktion *", list(rollen_dict.keys()) if rollen_dict else ["Keine Rolle"])
@@ -225,7 +241,15 @@ def render_mitarbeiter_verwaltung(supabase):
                 email = st.text_input("E-Mail (optional)")
                 telefon = st.text_input("Telefon (optional)")
                 adresse = st.text_area("Anschrift (optional)")
-                
+
+            st.markdown("##### 📅 Voreinstellung Wochenmodell (Mo - Fr)")
+            col_n1, col_n2, col_n3, col_n4, col_n5 = st.columns(5)
+            n_mo = col_n1.number_input("Mo Std", 0.0, 12.0, 8.0, 0.5, key="n_mo")
+            n_di = col_n2.number_input("Di Std", 0.0, 12.0, 8.0, 0.5, key="n_di")
+            n_mi = col_n3.number_input("Mi Std", 0.0, 12.0, 8.0, 0.5, key="n_mi")
+            n_do = col_n4.number_input("Do Std", 0.0, 12.0, 8.0, 0.5, key="n_do")
+            n_fr = col_n5.number_input("Fr Std", 0.0, 12.0, 6.0, 0.5, key="n_fr")
+            
             if st.form_submit_button("Mitarbeiter anlegen", type="primary", use_container_width=True):
                 if not mitarbeiternr or not vorname or not nachname or not passwort:
                     st.warning("Bitte Pflichtfelder ausfüllen.")
@@ -239,8 +263,13 @@ def render_mitarbeiter_verwaltung(supabase):
                             "geburtsdatum": str(geburtsdatum),
                             "taetig_seit": str(taetig_seit),
                             "urlaubstage_gesamt": urlaubstage,
-                            "wochenstunden": wochenstunden,
+                            "wochenstunden": n_mo + n_di + n_mi + n_do + n_fr,
                             "standard_pause_minuten": standard_pause,
+                            "soll_mo": n_mo,
+                            "soll_di": n_di,
+                            "soll_mi": n_mi,
+                            "soll_do": n_do,
+                            "soll_fr": n_fr,
                             "rolle_id": rollen_dict.get(rolle_bezeichnung),
                             "pin_hash": passwort,
                             "notfall_pin": notfall_pin,
@@ -411,81 +440,4 @@ def render_mitarbeiter_verwaltung(supabase):
                                 "art": art,
                                 "start_datum": str(start_datum),
                                 "end_datum": str(end_datum),
-                                "details": grund,
-                                "status": "in_bearbeitung"
-                            }).execute()
-                            st.success("Antrag erfolgreich eingereicht! Zuständige Vorgesetzte wurden benachrichtigt (Status: 🟡 In Bearbeitung).")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Fehler: {e}")
-
-        with sub_tab_meine:
-            if user_antraege:
-                for a in user_antraege:
-                    status = a.get("status")
-                    badge = "🟢 Genehmigt" if status == "genehmigt" else ("🔴 Abgelehnt" if status == "abgelehnt" else "🟡 In Bearbeitung")
-                    with st.expander(f"{badge} | {a.get('art')} vom {a.get('start_datum')} bis {a.get('end_datum')}"):
-                        st.write(f"**Details:** {a.get('details', '-')}")
-                        if status == "abgelehnt" and a.get("ablehnungsgrund"):
-                            st.error(f"**Ablehnungsgrund:** {a.get('ablehnungsgrund')}")
-            else:
-                st.info("Keine Anträge vorhanden.")
-
-        with sub_tab_admin:
-            if is_antrag_admin:
-                if all_antraege:
-                    for a in all_antraege:
-                        ma = a.get("mitarbeiter") or {}
-                        ma_name = f"{ma.get('vorname', '')} {ma.get('nachname', '')} (Nr: {ma.get('mitarbeiternummer', '-')})"
-                        status = a.get("status")
-                        badge = "🟢 Genehmigt" if status == "genehmigt" else ("🔴 Abgelehnt" if status == "abgelehnt" else "🟡 In Bearbeitung")
-
-                        with st.expander(f"{badge} | {ma_name} - {a.get('art')} ({a.get('start_datum')} bis {a.get('end_datum')})"):
-                            st.write(f"**Grund:** {a.get('details', '-')}")
-                            with st.form(f"admin_antrag_{a['id']}"):
-                                neu_status = st.selectbox("Status", ["in_bearbeitung", "genehmigt", "abgelehnt"], index=["in_bearbeitung", "genehmigt", "abgelehnt"].index(status))
-                                ablehnung_grund = st.text_input("Ablehnungsgrund (bei Rot erforderlich)", value=a.get("ablehnungsgrund", ""))
-                                if st.form_submit_button("Status speichern", type="primary"):
-                                    supabase.table("antraege").update({
-                                        "status": neu_status,
-                                        "ablehnungsgrund": ablehnung_grund if neu_status == "abgelehnt" else ""
-                                    }).eq("id", a["id"]).execute()
-                                    st.success("Antrag aktualisiert!")
-                                    st.rerun()
-                else:
-                    st.info("Keine Anträge im System.")
-
-    # --- TAB 5: Qualifikationen ---
-    with tab_qualifikationen:
-        st.subheader("Qualifikationen & Scheine")
-        try:
-            ma_list = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer").execute().data or []
-        except Exception:
-            ma_list = []
-
-        if ma_list:
-            sel_ma = st.selectbox("Mitarbeiter wählen", [m["id"] for m in ma_list], format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in ma_list if m["id"] == x), key="q_ma_sel")
-            with st.form("quali_form"):
-                kat = st.selectbox("Kategorie", ["Ausbildung", "Weiterbildung", "Zertifikat", "Sonstiges"])
-                titel = st.text_input("Titel *")
-                d_erh = st.date_input("Erhalten am", value=date.today())
-                d_bis = st.date_input("Gültig bis", value=None)
-                desc = st.text_area("Anmerkung")
-                up_file = st.file_uploader("Nachweis (Bild/PDF)", type=["png", "jpg", "jpeg", "pdf"])
-                
-                if st.form_submit_button("Speichern", type="primary", use_container_width=True):
-                    if titel:
-                        f_url = None
-                        if up_file:
-                            fb, ct, fn = compress_image(up_file)
-                            fp = f"{sel_ma}/{fn}"
-                            supabase.storage.from_("mitarbeiter-dokumente").upload(fp, fb, {"content-type": ct, "upsert": "true"})
-                            f_url = supabase.storage.from_("mitarbeiter-dokumente").get_public_url(fp)
-                        
-                        supabase.table("qualifikationen").insert({
-                            "mitarbeiter_id": sel_ma, "kategorie": kat, "titel": titel,
-                            "datum_erhalten": str(d_erh), "gueltig_bis": str(d_bis) if d_bis else None,
-                            "beschreibung": desc, "dokument_url": f_url
-                        }).execute()
-                        st.success("Gespeichert!")
-                        st.rerun()
+                                "

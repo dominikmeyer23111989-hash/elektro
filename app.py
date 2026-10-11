@@ -1,10 +1,35 @@
 import streamlit as st
 from supabase import create_client, Client
-from datetime import date
+from datetime import date, datetime
 import pandas as pd
 from fpdf import FPDF
 
 st.set_page_config(page_title="Elektro-Enterprise Portal", page_icon="⚡", layout="wide")
+
+# -----------------------------------------------------------------------------
+# Deutsches Datums- und Zeit-Format Hilfsfunktionen
+# -----------------------------------------------------------------------------
+def format_datum(val):
+    if not val or val == "-" or str(val).strip() == "":
+        return "-"
+    if isinstance(val, (date, datetime)):
+        return val.strftime("%d.%m.%Y")
+    try:
+        dt = datetime.strptime(str(val)[:10], "%Y-%m-%d")
+        return dt.strftime("%d.%m.%Y")
+    except Exception:
+        return str(val)
+
+def format_zeit(val):
+    if not val or val == "-":
+        return "-"
+    if isinstance(val, datetime):
+        return val.strftime("%H:%M Uhr")
+    try:
+        dt = datetime.strptime(str(val), "%H:%M:%S")
+        return dt.strftime("%H:%M Uhr")
+    except Exception:
+        return str(val)
 
 # -----------------------------------------------------------------------------
 # 1. Supabase Initialisierung
@@ -24,7 +49,6 @@ try:
 except Exception as e:
     st.error(f"Fehler bei der Verbindung zu Supabase: {e}")
 
-# Session State
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "user_data" not in st.session_state:
@@ -58,8 +82,8 @@ def generate_mitarbeiter_pdf(mitarbeiter_data, qualifikationen):
     fields = [
         ("Mitarbeiternummer:", str(mitarbeiter_data.get('mitarbeiternummer', '-'))),
         ("Rolle im Betrieb:", str(mitarbeiter_data.get('rollen', {}).get('bezeichnung', '-') if mitarbeiter_data.get('rollen') else '-')),
-        ("Geburtsdatum:", str(mitarbeiter_data.get('geburtsdatum', '-'))),
-        ("Tätig seit:", str(mitarbeiter_data.get('taetig_seit', '-'))),
+        ("Geburtsdatum:", format_datum(mitarbeiter_data.get('geburtsdatum'))),
+        ("Tätig seit:", format_datum(mitarbeiter_data.get('taetig_seit'))),
         ("E-Mail:", str(mitarbeiter_data.get('email', '-'))),
         ("Telefon:", str(mitarbeiter_data.get('telefon', '-'))),
         ("Adresse:", str(mitarbeiter_data.get('adresse', '-'))),
@@ -88,8 +112,8 @@ def generate_mitarbeiter_pdf(mitarbeiter_data, qualifikationen):
         for q in qualifikationen:
             pdf.cell(40, 6, str(q.get('kategorie', '')), border=1)
             pdf.cell(60, 6, str(q.get('titel', '')), border=1)
-            pdf.cell(30, 6, str(q.get('datum_erhalten', '-')), border=1)
-            pdf.cell(30, 6, str(q.get('gueltig_bis', '-')), border=1, new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(30, 6, format_datum(q.get('datum_erhalten')), border=1)
+            pdf.cell(30, 6, format_datum(q.get('gueltig_bis')), border=1, new_x="LMARGIN", new_y="NEXT")
     else:
         pdf.set_font('Helvetica', 'I', 10)
         pdf.cell(0, 6, "Keine Qualifikationen / Scheine hinterlegt.", new_x="LMARGIN", new_y="NEXT")
@@ -133,8 +157,8 @@ def render_mitarbeiter_verwaltung():
                     "Nr": m.get("mitarbeiternummer"),
                     "Name": f"{m.get('vorname')} {m.get('nachname')}",
                     "Rolle": m.get("rollen", {}).get("bezeichnung", "-") if m.get("rollen") else "-",
-                    "Tätig seit": m.get("taetig_seit", "-"),
-                    "Geburtsdatum": m.get("geburtsdatum", "-"),
+                    "Tätig seit": format_datum(m.get("taetig_seit")),
+                    "Geburtsdatum": format_datum(m.get("geburtsdatum")),
                     "Telefon": m.get("telefon", "-"),
                     "Status": "🟢 Aktiv" if m.get("ist_aktiv") else "🔴 Inaktiv"
                 } for m in mitarbeiter_liste])
@@ -180,8 +204,8 @@ def render_mitarbeiter_verwaltung():
                 mitarbeiternr = st.text_input("Mitarbeiternummer *", placeholder="z. B. 1005")
                 vorname = st.text_input("Vorname *")
                 nachname = st.text_input("Nachname *")
-                geburtsdatum = st.date_input("Geburtsdatum", value=date(1990, 1, 1))
-                taetig_seit = st.date_input("Im Unternehmen tätig seit", value=date.today())
+                geburtsdatum = st.date_input("Geburtsdatum", value=date(1990, 1, 1), format="DD.MM.YYYY")
+                taetig_seit = st.date_input("Im Unternehmen tätig seit", value=date.today(), format="DD.MM.YYYY")
             with col2:
                 rolle_bezeichnung = st.selectbox("Rolle / Funktion *", list(rollen_dict.keys()) if rollen_dict else ["Admin"])
                 passwort = st.text_input("Erst-Passwort / PIN *", type="password")
@@ -252,8 +276,8 @@ def render_mitarbeiter_verwaltung():
                 kategorie = st.selectbox("Kategorie", ["Ausbildung", "Weiterbildung", "Zertifikat / Schein", "Sonstiges"])
                 titel = st.text_input("Bezeichnung / Titel *", placeholder="z. B. Ersthelfer, DGUV V3 Prüfschein")
                 col_d1, col_d2 = st.columns(2)
-                datum_erhalten = col_d1.date_input("Erhalten am", value=date.today())
-                gueltig_bis = col_d2.date_input("Gültig bis (optional)", value=None)
+                datum_erhalten = col_d1.date_input("Erhalten am", value=date.today(), format="DD.MM.YYYY")
+                gueltig_bis = col_d2.date_input("Gültig bis (optional)", value=None, format="DD.MM.YYYY")
                 beschreibung = st.text_area("Freitext / Anmerkung")
                 uploaded_file = st.file_uploader("Upload Nachweis-Foto oder PDF", type=["png", "jpg", "jpeg", "pdf"])
                 
@@ -282,6 +306,19 @@ def render_mitarbeiter_verwaltung():
                         supabase.table("qualifikationen").insert(q_data).execute()
                         st.success("Qualifikation eingetragen!")
                         st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### 📜 Hinterlegte Qualifikationen")
+            existing_q = supabase.table("qualifikationen").select("*").eq("mitarbeiter_id", sel_ma_id).execute().data or []
+            if existing_q:
+                for q in existing_q:
+                    with st.expander(f"{q['kategorie']}: {q['titel']} (Erhalten am: {format_datum(q.get('datum_erhalten'))})"):
+                        st.write(f"**Gültig bis:** {format_datum(q.get('gueltig_bis'))}")
+                        st.write(f"**Beschreibung:** {q.get('beschreibung', '-')}")
+                        if q.get("dokument_url"):
+                            st.markdown(f"[📄 Nachweis-Dokument / Foto öffnen]({q['dokument_url']})")
+            else:
+                st.info("Für diesen Mitarbeiter wurden noch keine Qualifikationen erfasst.")
 
 # -----------------------------------------------------------------------------
 # 4. Login-System

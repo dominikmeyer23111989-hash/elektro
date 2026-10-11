@@ -454,24 +454,4 @@ def render_login():
                 new_pw = st.text_input("Neues Passwort vergeben *", type="password")
                 new_pw_confirm = st.text_input("Neues Passwort wiederholen *", type="password")
 
-                btn_reset = st.form_submit_button("Passwort jetzt zurücksetzen", type="primary", use_container_width=True)
-
-                if btn_reset:
-                    if not reset_ma_nr or not new_pw or not secret_check:
-                        st.warning("Bitte füllen Sie alle erforderlichen Felder aus.")
-                    elif new_pw != new_pw_confirm:
-                        st.error("Die eingegebenen Passwörter stimmen nicht überein.")
-                    elif len(new_pw) < 4:
-                        st.error("Das neue Passwort muss mindestens 4 Zeichen lang sein.")
-                    else:
-                        try:
-                            res = supabase.table("mitarbeiter").select("*").eq("mitarbeiternummer", reset_ma_nr).eq("ist_aktiv", True).execute()
-                            if not res.data:
-                                st.error("Mitarbeiternummer ungültig.")
-                                return
-                            
-                            ma_rec = res.data[0]
-                            verified = False
-
-                            if method == "Notfall-PIN & Geburtsdatum":
-                                ma_geb = str(ma_rec.get("geburtsdatum
+                btn_reset = st.form_submit_button("Passwort jetzt zurücksetzen", type="primary", use_container_

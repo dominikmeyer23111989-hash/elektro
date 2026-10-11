@@ -78,11 +78,6 @@ def render_login():
                                     "id": user_rec["id"],
                                     "mitarbeiternummer": user_rec.get("mitarbeiternummer", "-"),
                                     "name": f"{user_rec.get('vorname', '')} {user_rec.get('nachname', '')}".strip(),
-                                    "vorname": user_rec.get('vorname', ''),
-                                    "nachname": user_rec.get('nachname', ''),
-                                    "email": user_rec.get('email', ''),
-                                    "telefon": user_rec.get('telefon', ''),
-                                    "adresse": user_rec.get('adresse', ''),
                                     "rolle": f_rolle,
                                     "ebene": f_ebene,
                                     "rechte": f_rechte
@@ -137,11 +132,11 @@ def render_login():
                             if method == "Notfall-PIN & Geburtsdatum":
                                 ma_geb = str(ma_rec.get("geburtsdatum", ""))
                                 ma_pin = str(ma_rec.get("notfall_pin", ""))
-                                if ma_geb == str(geburtsdatum) and ma_pin == notfall_pin and notfall_pin != "":
+                                if ma_geb == str(geburtsdatum) && ma_pin == notfall_pin && notfall_pin != "":
                                     verified = True
                             else:
                                 ma_code = str(ma_rec.get("recovery_code", ""))
-                                if ma_code == recovery_code and recovery_code != "":
+                                if ma_code == recovery_code && recovery_code != "":
                                     verified = True
 
                             if verified:
@@ -154,31 +149,38 @@ def render_login():
                             st.error(f"Fehler beim Zurücksetzen: {e}")
 
 # -----------------------------------------------------------------------------
-# 3. Eigene Daten bearbeiten (Self-Service Profil)
+# 3. Eigene Daten ansehen & bearbeiten (Self-Service Profil)
 # -----------------------------------------------------------------------------
 def render_mein_profil(supabase):
     st.title("👤 Mein Profil & Einstellungen")
-    st.caption("Hier können Sie Ihre persönlichen Kontaktdaten sowie Ihr Passwort bzw. Ihre PIN selbst verwalten.")
+    st.caption("Hier sehen Sie Ihre aktuellen Stammdaten und können diese anpassen.")
 
     user = st.session_state.get("user_data")
     user_id = user["id"]
 
     # Aktuelle Daten frisch aus der Datenbank laden
     try:
-        res = supabase.table("mitarbeiter").select("*").eq("id", user_id).execute()
-        current_data = res.data[0] if res.data else user
+        res = supabase.table("mitarbeiter").select("*, rollen(bezeichnung)").eq("id", user_id).execute()
+        current_data = res.data[0] if res.data else {}
     except Exception:
-        current_data = user
+        current_data = {}
 
-    tab_daten, tab_passwort = st.tabs(["📝 Kontaktdaten bearbeiten", "🔒 Passwort / PIN ändern"])
+    # Oben: Klare Ansicht der aktuellen Daten (Read-only Info)
+    st.markdown("### 📋 Aktuelle Stammdaten")
+    col_v1, col_v2, col_v3 = st.columns(3)
+    col_v1.metric("Mitarbeiternummer", current_data.get("mitarbeiternummer", "-"))
+    col_v2.metric("Zugewiesene Rolle", current_data.get("rollen", {}).get("bezeichnung", "-") if current_data.get("rollen") else "-")
+    col_v3.metric("Status", "🟢 Aktiv" if current_data.get("ist_aktiv") else "🔴 Inaktiv")
 
-    # --- TAB 1: Kontaktdaten (Ohne Mitarbeiternummer / Rolle) ---
+    st.markdown("---")
+
+    tab_daten, tab_passwort = st.tabs(["📝 Kontaktdaten anpassen", "🔒 Passwort / PIN ändern"])
+
+    # --- TAB 1: Kontaktdaten bearbeiten ---
     with tab_daten:
         with st.form("profil_daten_form"):
-            st.info(f"🔒 **Mitarbeiternummer:** `{current_data.get('mitarbeiternummer')}` (Kann nicht geändert werden)")
-            st.info(f"🔑 **Zugewiesene Rolle:** `{user.get('rolle')}` (Wird durch die Geschäftsleitung/Admin verwaltet)")
+            st.markdown("#### Kontaktdaten aktualisieren")
             
-            st.markdown("---")
             new_vorname = st.text_input("Vorname", value=current_data.get("vorname", ""))
             new_nachname = st.text_input("Nachname", value=current_data.get("nachname", ""))
             new_email = st.text_input("E-Mail-Adresse", value=current_data.get("email", ""))
@@ -198,9 +200,10 @@ def render_mein_profil(supabase):
                     }
                     supabase.table("mitarbeiter").update(update_payload).eq("id", user_id).execute()
                     
-                    # Session State aktualisieren
+                    # Session State für den Vornamen/Namen in der Sidebar aktualisieren
                     st.session_state["user_data"]["name"] = f"{new_vorname} {new_nachname}".strip()
-                    st.success("Ihre Kontaktdaten wurden erfolgreich aktualisiert!")
+                    
+                    st.success("✅ Daten erfolgreich angepasst!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Fehler beim Speichern der Daten: {e}")
@@ -226,7 +229,7 @@ def render_mein_profil(supabase):
                     if str(current_data.get("pin_hash")) == str(alt_passwort):
                         try:
                             supabase.table("mitarbeiter").update({"pin_hash": neues_passwort}).eq("id", user_id).execute()
-                            st.success("Ihr Passwort wurde erfolgreich geändert!")
+                            st.success("✅ Passwort erfolgreich angepasst!")
                         except Exception as e:
                             st.error(f"Fehler beim Ändern des Passworts: {e}")
                     else:
@@ -250,7 +253,6 @@ def render_app():
     st.sidebar.write(f"**{full_name}**")
     st.sidebar.caption(f"Nr: {user.get('mitarbeiternummer', '-')} | Rolle: {user.get('rolle', '-')}")
     
-    # Eigener Menüpunkt für das Profil in der Sidebar
     menu_selection = st.sidebar.radio(
         "Navigation",
         options=["🏠 Module & Hauptmenü", "👤 Mein Profil & Einstellungen"]
@@ -266,7 +268,6 @@ def render_app():
     if menu_selection == "👤 Mein Profil & Einstellungen":
         render_mein_profil(supabase)
     else:
-        # Menürechte auswerten
         allowed_menu_keys = user.get("rechte", [])
         available_menus = {k: v for k, v in ALL_MODULES.items() if k in allowed_menu_keys}
 
@@ -280,7 +281,6 @@ def render_app():
             format_func=lambda x: available_menus[x]
         )
 
-        # --- ROUTING DER MODULE ---
         if selected_main:
             if selected_main == "1":
                 render_mitarbeiter_verwaltung(supabase)

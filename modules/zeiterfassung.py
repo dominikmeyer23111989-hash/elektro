@@ -35,7 +35,7 @@ def render_zeiterfassung(supabase):
     col_m2.metric("Tägliches Soll", f"{tages_soll:.1f} Std.")
     col_m3.metric("Ihre Standard-Pause", f"{standard_pause} Min.")
     
-    status_text = "🟢 Eingestempelt seit " + datetime.fromisoformat(offener_eintrag["einstempeln"]).strftime("%H:%M Uhr") if offener_eintrag else "🔴 Ausgestempelt"
+    status_text = "🟢 Eingestempelt seit " + datetime.fromisoformat(offener_eintrag["einstempeln"].replace('Z', '')).strftime("%H:%M Uhr") if offener_eintrag else "🔴 Ausgestempelt"
     col_m4.metric("Aktueller Status", status_text)
 
     st.markdown("---")
@@ -56,7 +56,7 @@ def render_zeiterfassung(supabase):
                 st.info("Sie sind aktuell **nicht** eingestempelt.")
                 if st.button("🟢 Jetzt Einstempeln", type="primary", use_container_width=True):
                     try:
-                        jetzt = datetime.now().isoformat()
+                        jetzt = datetime.now().isoformat(timespec='seconds')
                         supabase.table("zeiterfassung").insert({
                             "mitarbeiter_id": user_id,
                             "einstempeln": jetzt
@@ -66,7 +66,7 @@ def render_zeiterfassung(supabase):
                     except Exception as e:
                         st.error(f"Fehler beim Einstempeln: {e}")
             else:
-                st.success(f"Eingestempelt um: {datetime.fromisoformat(offener_eintrag['einstempeln']).strftime('%H:%M:%S Uhr')}")
+                st.success(f"Eingestempelt um: {datetime.fromisoformat(offener_eintrag['einstempeln'].replace('Z', '')).strftime('%H:%M:%S Uhr')}")
                 
                 with st.form("ausstempeln_form"):
                     # Die in der Mitarbeiterverwaltung festgelegte individuelle Standard-Pause wird automatisch voreingestellt!
@@ -75,7 +75,7 @@ def render_zeiterfassung(supabase):
                     
                     if st.form_submit_button("🔴 Jetzt Ausstempeln", type="primary", use_container_width=True):
                         try:
-                            jetzt_aus = datetime.now().isoformat()
+                            jetzt_aus = datetime.now().isoformat(timespec='seconds')
                             supabase.table("zeiterfassung").update({
                                 "ausstempeln": jetzt_aus,
                                 "pause_minuten": pause,
@@ -108,11 +108,11 @@ def render_zeiterfassung(supabase):
             display_data = []
             
             for e in eintraege:
-                ein = datetime.fromisoformat(e["einstempeln"].replace('Z', '+00:00'))
+                ein = datetime.fromisoformat(e["einstempeln"].replace('Z', ''))
                 aus_str = e.get("ausstempeln")
                 
                 if aus_str:
-                    aus = datetime.fromisoformat(aus_str.replace('Z', '+00:00'))
+                    aus = datetime.fromisoformat(aus_str.replace('Z', ''))
                     dauer_sec = (aus - ein).total_seconds() - (e.get("pause_minuten", 0) * 60)
                     netto_stunden = max(0.0, dauer_sec / 3600.0)
                     gesamt_ist_stunden += netto_stunden
@@ -153,12 +153,12 @@ def render_zeiterfassung(supabase):
                 admin_display = []
                 for e in all_data:
                     ma = e.get("mitarbeiter") or {}
-                    ein = datetime.fromisoformat(e["einstempeln"].replace('Z', '+00:00'))
+                    ein = datetime.fromisoformat(e["einstempeln"].replace('Z', ''))
                     aus_str = e.get("ausstempeln")
                     netto_stunden = 0.0
                     
                     if aus_str:
-                        aus = datetime.fromisoformat(aus_str.replace('Z', '+00:00'))
+                        aus = datetime.fromisoformat(aus_str.replace('Z', ''))
                         netto_stunden = max(0.0, ((aus - ein).total_seconds() - (e.get("pause_minuten", 0) * 60)) / 3600.0)
                         aus_anzeige = aus.strftime("%d.%m.%Y %H:%M")
                     else:

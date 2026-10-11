@@ -4,7 +4,6 @@ import pandas as pd
 from fpdf import FPDF
 from io import BytesIO
 from PIL import Image
-from modules.mitarbeiter import render_mitarbeiter_verwaltung, ALL_MODULES
 ALL_MODULES = {
     "1": "1. Mitarbeiterverwaltung",
     "2": "2. Lagerverwaltung",

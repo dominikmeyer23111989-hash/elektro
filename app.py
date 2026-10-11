@@ -312,14 +312,13 @@ def render_mitarbeiter_verwaltung():
         with st.expander("➕ Neue Rolle / Funktion anlegen", expanded=False):
             with st.form("neue_rolle_form"):
                 n_bezeichnung = st.text_input("Rollenbezeichnung *", placeholder="z. B. Bauleiter, Monteur, Azubi")
-                n_ebene = st.selectbox("Ebene / Betriebsbereich", ["baustelle", "buero", "leitung"])
+                n_ebene = st.text_input("Bereich / Ebene (optional)", placeholder="z. B. baustelle, buero, leitung")
                 
                 st.markdown("**Ersterlaubte Module wählen:**")
                 col_r1, col_r2 = st.columns(2)
                 initial_selected = []
                 for idx, (m_k, m_t) in enumerate(ALL_MODULES.items()):
                     c_target = col_r1 if idx < 5 else col_r2
-                    # Standardmäßig z.B. Doku/Zeiterfassung aktiv
                     default_checked = m_k in ["3", "8"]
                     if c_target.checkbox(m_t, value=default_checked, key=f"new_role_m_{m_k}"):
                         initial_selected.append(m_k)
@@ -329,15 +328,22 @@ def render_mitarbeiter_verwaltung():
                         st.warning("Bitte geben Sie einen Namen für die Rolle ein.")
                     else:
                         try:
-                            supabase.table("rollen").insert({
+                            insert_payload = {
                                 "bezeichnung": n_bezeichnung,
-                                "ebene": n_ebene,
                                 "erlaubte_menues": initial_selected
-                            }).execute()
+                            }
+                            if n_ebene.strip():
+                                insert_payload["ebene"] = n_ebene.strip()
+
+                            supabase.table("rollen").insert(insert_payload).execute()
                             st.success(f"Rolle '{n_bezeichnung}' erfolgreich angelegt!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Fehler beim Anlegen der Rolle: {e}")
+                            err_msg = str(e)
+                            if "23505" in err_msg or "unique constraint" in err_msg.lower():
+                                st.error(f"Eine Rolle mit dem Namen '{n_bezeichnung}' existiert bereits.")
+                            else:
+                                st.error(f"Fehler beim Anlegen der Rolle: {e}")
 
         st.markdown("---")
 
@@ -372,7 +378,7 @@ def render_mitarbeiter_verwaltung():
             current_role_obj = next((r for r in rollen_data if r["bezeichnung"] == selected_rolle_name), None)
 
             if current_role_obj:
-                st.markdown(f"#### Rechte für Rolle: **{current_role_obj['bezeichnung']}** *(Ebene: {current_role_obj.get('ebene', '-')})*")
+                st.markdown(f"#### Rechte für Rolle: **{current_role_obj['bezeichnung']}** *(Bereich: {current_role_obj.get('ebene', '-')})*")
                 
                 current_allowed = current_role_obj.get("erlaubte_menues", [])
                 new_allowed = []
@@ -545,122 +551,3 @@ def render_login():
         # --- TAB 2: Autonomes Passwort-Zurücksetzen ---
         with tab_reset:
             st.markdown("##### Self-Service Wiederherstellung")
-            st.caption("Setzen Sie Ihr Passwort direkt über Ihre Notfall-PIN oder Ihren Recovery-Code zurück.")
-
-            with st.form("reset_form"):
-                reset_ma_nr = st.text_input("Mitarbeiternummer *", placeholder="z. B. 1000")
-                method = st.radio("Verifizierungsmethode", ["Notfall-PIN & Geburtsdatum", "Master-Recovery-Code"])
-                
-                if method == "Notfall-PIN & Geburtsdatum":
-                    geburtsdatum = st.date_input("Geburtsdatum zur Verifizierung", value=date(1990, 1, 1), format="DD.MM.YYYY")
-                    notfall_pin = st.text_input("Ihre 4-stellige Notfall-PIN", type="password")
-                    secret_check = str(notfall_pin)
-                else:
-                    recovery_code = st.text_input("Master-Recovery-Code", placeholder="z. B. REC-1000-88")
-                    secret_check = str(recovery_code)
-
-                st.markdown("---")
-                new_pw = st.text_input("Neues Passwort vergeben *", type="password")
-                new_pw_confirm = st.text_input("Neues Passwort wiederholen *", type="password")
-
-                btn_reset = st.form_submit_button("Passwort jetzt zurücksetzen", type="primary", width="stretch")
-
-                if btn_reset:
-                    if not reset_ma_nr or not new_pw or not secret_check:
-                        st.warning("Bitte füllen Sie alle erforderlichen Felder aus.")
-                    elif new_pw != new_pw_confirm:
-                        st.error("Die eingegebenen Passwörter stimmen nicht überein.")
-                    elif len(new_pw) < 4:
-                        st.error("Das neue Passwort muss mindestens 4 Zeichen lang sein.")
-                    else:
-                        try:
-                            res = supabase.table("mitarbeiter").select("*").eq("mitarbeiternummer", reset_ma_nr).eq("ist_aktiv", True).execute()
-                            if not res.data:
-                                st.error("Mitarbeiternummer ungültig.")
-                                return
-                            
-                            ma_rec = res.data[0]
-                            verified = False
-
-                            if method == "Notfall-PIN & Geburtsdatum":
-                                ma_geb = str(ma_rec.get("geburtsdatum", ""))
-                                ma_pin = str(ma_rec.get("notfall_pin", ""))
-                                if ma_geb == str(geburtsdatum) and ma_pin == notfall_pin and notfall_pin != "":
-                                    verified = True
-                            else:
-                                ma_code = str(ma_rec.get("recovery_code", ""))
-                                if ma_code == recovery_code and recovery_code != "":
-                                    verified = True
-
-                            if verified:
-                                supabase.table("mitarbeiter").update({"pin_hash": new_pw}).eq("id", ma_rec["id"]).execute()
-                                st.success("Ihr Passwort wurde erfolgreich geändert! Sie können sich jetzt anmelden.")
-                            else:
-                                st.error("Verifizierung fehlgeschlagen: Sicherheitsdaten falsch.")
-
-                        except Exception as e:
-                            st.error(f"Fehler beim Zurücksetzen: {e}")
-
-# -----------------------------------------------------------------------------
-# 5. Hauptanwendung
-# -----------------------------------------------------------------------------
-def render_app():
-    user = st.session_state.get("user_data")
-    if not user:
-        st.session_state["authenticated"] = False
-        st.rerun()
-        return
-    
-    # Vorname extrahieren
-    full_name = user.get("name", "Mitarbeiter")
-    vorname = full_name.split()[0] if full_name else "Mitarbeiter"
-
-    st.sidebar.title("⚡ Elektro-Portal")
-    st.sidebar.markdown(f"### Hallo, {vorname}! 👋")
-    st.sidebar.write(f"**{full_name}**")
-    st.sidebar.caption(f"Nr: {user.get('mitarbeiternummer', '-')} | Rolle: {user.get('rolle', '-')}")
-    
-    if st.sidebar.button("🚪 Abmelden", width="stretch"):
-        st.session_state["authenticated"] = False
-        st.session_state["user_data"] = None
-        st.rerun()
-
-    st.sidebar.markdown("---")
-
-    menu_structure = {
-        "1": {"title": "👨‍💼 1. Mitarbeiterverwaltung", "sub": ["Verwaltung"]},
-        "2": {"title": "📦 2. Lagerverwaltung", "sub": ["Materialbestand"]},
-        "3": {"title": "⏱️ 3. Zeiterfassung", "sub": ["Stundenzettel"]},
-        "4": {"title": "📋 4. Aufträge", "sub": ["Auftragsübersicht"]},
-        "5": {"title": "👥 5. Kunden", "sub": ["Kundenstamm"]},
-        "6": {"title": "🚛 6. Fahrzeuge", "sub": ["Fuhrparkliste"]},
-        "7": {"title": "🏢 7. Gebäude", "sub": ["Anlagenregister"]},
-        "8": {"title": "📁 8. Dokumente", "sub": ["Schaltpläne"]},
-        "9": {"title": "💶 9. Finanzen / Monitor", "sub": ["Rechnungen"]}
-    }
-
-    allowed_menu_keys = user.get("rechte", [])
-    available_menus = {k: v for k, v in menu_structure.items() if k in allowed_menu_keys}
-
-    if not available_menus:
-        st.warning("Keine zugewiesenen Menürechte gefunden.")
-        return
-
-    selected_main = st.sidebar.selectbox(
-        "Hauptmenü",
-        options=list(available_menus.keys()),
-        format_func=lambda x: available_menus[x]["title"]
-    )
-
-    if selected_main:
-        if selected_main == "1":
-            render_mitarbeiter_verwaltung()
-        else:
-            st.title(available_menus[selected_main]["title"])
-            st.info("Dieses Modul wird als Nächstes ausgebaut.")
-
-# Control Flow
-if not st.session_state.get("authenticated", False):
-    render_login()
-else:
-    render_app()

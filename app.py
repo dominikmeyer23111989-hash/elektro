@@ -1,6 +1,7 @@
 import streamlit as st
 from supabase import create_client, Client
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from modules.mitarbeiter import render_mitarbeiter_verwaltung, ALL_MODULES
 from modules.zeiterfassung import render_zeiterfassung
 
@@ -244,7 +245,7 @@ def render_mein_profil(supabase):
                         st.error("Das eingegebene aktuelle Passwort ist falsch.")
 
 # -----------------------------------------------------------------------------
-# 4. Hauptanwendung & Routing (Inklusive Sidebar-Stempeluhr)
+# 4. Hauptanwendung & Routing (Inklusive Sidebar-Stempeluhr mit Status-Ball)
 # -----------------------------------------------------------------------------
 def render_app():
     user = st.session_state.get("user_data")
@@ -259,102 +260,4 @@ def render_app():
 
     st.sidebar.title("⚡ Elektro-Portal")
     st.sidebar.markdown(f"### Hallo, {vorname}! 👋")
-    st.sidebar.write(f"**{full_name}**")
-    st.sidebar.caption(f"Nr: {user.get('mitarbeiternummer', '-')} | Rolle: {user.get('rolle', '-')}")
-    
-    # --- Live Stempelfunktion direkt in der Sidebar ---
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("#### ⏱️ Schnell-Zeiterfassung")
-
-    # Aktuellen Stempel-Status und individuelle Standard-Pause aus DB laden
-    try:
-        offen_res = supabase.table("zeiterfassung").select("*").eq("mitarbeiter_id", user_id).is_("ausstempeln", "null").execute()
-        offener_eintrag = offen_res.data[0] if offen_res.data else None
-    except Exception:
-        offener_eintrag = None
-
-    try:
-        ma_res = supabase.table("mitarbeiter").select("standard_pause_minuten").eq("id", user_id).execute()
-        std_pause = int(ma_res.data[0].get("standard_pause_minuten") or 30) if ma_res.data else 30
-    except Exception:
-        std_pause = 30
-
-    if not offener_eintrag:
-        st.sidebar.markdown("🔴 **Status:** Ausgestempelt")
-        if st.sidebar.button("🟢 Einstempeln", use_container_width=True, type="primary"):
-            try:
-                # Lokale Zeit verwenden statt UTC
-                jetzt = datetime.now().isoformat(timespec='seconds')
-                supabase.table("zeiterfassung").insert({
-                    "mitarbeiter_id": user_id,
-                    "einstempeln": jetzt
-                }).execute()
-                st.success("Eingestempelt!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Fehler: {e}")
-    else:
-        ein_zeit = datetime.fromisoformat(offener_eintrag["einstempeln"].replace('Z', '')).strftime("%H:%M")
-        st.sidebar.markdown(f"🟢 **Status:** Eingestempelt seit {ein_zeit} Uhr")
-        
-        with st.sidebar.form("sidebar_ausstempeln_form"):
-            sb_pause = st.number_input("Pause (Min)", min_value=0, max_value=120, value=std_pause, step=5)
-            if st.form_submit_button("🔴 Ausstempeln", use_container_width=True, type="primary"):
-                try:
-                    # Lokale Zeit verwenden statt UTC
-                    jetzt_aus = datetime.now().isoformat(timespec='seconds')
-                    supabase.table("zeiterfassung").update({
-                        "ausstempeln": jetzt_aus,
-                        "pause_minuten": sb_pause
-                    }).eq("id", offener_eintrag["id"]).execute()
-                    st.success("Ausgestempelt!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Fehler: {e}")
-
-    st.sidebar.markdown("---")
-
-    menu_selection = st.sidebar.radio(
-        "Navigation",
-        options=["🏠 Module & Hauptmenü", "👤 Mein Profil & Einstellungen"]
-    )
-
-    if st.sidebar.button("🚪 Abmelden", use_container_width=True):
-        st.session_state["authenticated"] = False
-        st.session_state["user_data"] = None
-        st.rerun()
-
-    st.sidebar.markdown("---")
-
-    if menu_selection == "👤 Mein Profil & Einstellungen":
-        render_mein_profil(supabase)
-    else:
-        allowed_menu_keys = user.get("rechte", [])
-        available_menus = {k: v for k, v in ALL_MODULES.items() if k in allowed_menu_keys}
-
-        if not available_menus:
-            st.warning("Noch keine zugewiesenen Menürechte gefunden. Bitte wenden Sie sich an den Administrator.")
-            return
-
-        selected_main = st.sidebar.selectbox(
-            "Hauptmenü",
-            options=list(available_menus.keys()),
-            format_func=lambda x: available_menus[x]
-        )
-
-        if selected_main:
-            if selected_main == "1":
-                render_mitarbeiter_verwaltung(supabase)
-            elif selected_main == "3":
-                render_zeiterfassung(supabase)
-            else:
-                st.title(available_menus[selected_main])
-                st.info("Dieses Modul wird als Nächstes ausgebaut.")
-
-# -----------------------------------------------------------------------------
-# Kontrollfluss
-# -----------------------------------------------------------------------------
-if not st.session_state.get("authenticated", False):
-    render_login()
-else:
-    render_app()
+    st.sidebar.write(f

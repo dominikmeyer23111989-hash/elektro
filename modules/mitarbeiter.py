@@ -439,5 +439,4 @@ def render_mitarbeiter_verwaltung(supabase):
                                 "mitarbeiter_id": user_id,
                                 "art": art,
                                 "start_datum": str(start_datum),
-                                "end_datum": str(end_datum),
-                                "
+                                "end_datum": str(end_datum),"

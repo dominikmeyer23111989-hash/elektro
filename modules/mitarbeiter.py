@@ -68,9 +68,13 @@ def generate_mitarbeiter_pdf(mitarbeiter_data, qualifikationen):
     pdf.cell(0, 8, f"{mitarbeiter_data.get('vorname')} {mitarbeiter_data.get('nachname')}", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 11)
     
+    rolle_txt = "-"
+    if mitarbeiter_data.get('rollen'):
+        rolle_txt = str(mitarbeiter_data.get('rollen', {}).get('bezeichnung', '-'))
+
     fields = [
         ("Mitarbeiternummer:", str(mitarbeiter_data.get('mitarbeiternummer', '-'))),
-        ("Rolle im Betrieb:", str(mitarbeiter_data.get('rollen', {}).get('bezeichnung', '-'))),
+        ("Rolle im Betrieb:", rolle_txt),
         ("Geburtsdatum:", str(mitarbeiter_data.get('geburtsdatum', '-'))),
         ("Tätig seit:", str(mitarbeiter_data.get('taetig_seit', '-'))),
         ("E-Mail:", str(mitarbeiter_data.get('email', '-'))),
@@ -194,7 +198,10 @@ def render_mitarbeiter_verwaltung(supabase):
                 taetig_seit = st.date_input("Im Unternehmen tätig seit", value=date.today(), format="DD.MM.YYYY")
                 
             with col2:
-                rolle_bezeichnung = st.selectbox("Rolle / Funktion im Unternehmen *", list(rollen_dict.keys()) if rollen_dict else ["Admin"])
+                rolle_bezeichnung = st.selectbox(
+                    "Rolle / Funktion im Unternehmen *", 
+                    list(rollen_dict.keys()) if rollen_dict else ["Keine Rolle vorhanden"]
+                )
                 passwort = st.text_input("Erst-Passwort / PIN *", type="password", help="Wird dem Mitarbeiter mitgeteilt.")
                 notfall_pin = st.text_input("4-stellige Notfall-PIN", type="password", max_chars=4, placeholder="z. B. 4321")
                 email = st.text_input("E-Mail-Adresse (optional)")
@@ -204,8 +211,8 @@ def render_mitarbeiter_verwaltung(supabase):
             submitted = st.form_submit_button("Mitarbeiter anlegen", type="primary", width="stretch")
             
             if submitted:
-                if not mitarbeiternr or not vorname or not nachname or not passwort:
-                    st.warning("Bitte füllen Sie alle Pflichtfelder (*) aus.")
+                if not mitarbeiternr or not vorname or not nachname or not passwort or not rollen_dict:
+                    st.warning("Bitte füllen Sie alle Pflichtfelder (*) aus und legen Sie vorher mindestens eine Rolle an.")
                 else:
                     try:
                         rec_code = f"REC-{mitarbeiternr}-88"
@@ -232,27 +239,64 @@ def render_mitarbeiter_verwaltung(supabase):
                         st.error(f"Fehler beim Anlegen: {e}")
 
     # -------------------------------------------------------------------------
-    # TAB 3: Rollen & Rechte-Matrix anpassen
+    # TAB 3: Vollständig freie Rollen- & Rechteverwaltung
     # -------------------------------------------------------------------------
     with tab_rollen:
-        st.subheader("Rollen- & Rechteverwaltung")
-        st.caption("Legen Sie fest, welche Rollen Zugriff auf welche Module besitzen.")
-        
+        st.subheader("🔑 Dynamische Rollen- & Rechteverwaltung")
+        st.caption("Erstellen Sie neue Betriebrollen (z. B. Bauleiter, Azubi, Monteur) komplett frei und bestimmen Sie per Checkbox, welche Module diese sehen dürfen.")
+
+        # 1. Neue Rolle anlegen
+        with st.expander("➕ Neue Rolle im System erstellen", expanded=False):
+            with st.form("neue_rolle_form"):
+                n_bezeichnung = st.text_input("Rollenbezeichnung *", placeholder="z. B. Kundendienst-Techniker")
+                n_ebene = st.text_input("Bereich / Ebene (optional)", placeholder="z. B. baustelle oder buero")
+                
+                st.markdown("**Ersterlaubte Module für diese Rolle auswählen:**")
+                col_r1, col_r2 = st.columns(2)
+                initial_selected = []
+                for idx, (m_k, m_t) in enumerate(ALL_MODULES.items()):
+                    target_col = col_r1 if idx < 5 else col_r2
+                    if target_col.checkbox(m_t, value=(m_k in ["3", "8"]), key=f"new_role_mod_{m_k}"):
+                        initial_selected.append(m_k)
+
+                if st.form_submit_button("Neue Rolle speichern", type="primary"):
+                    if not n_bezeichnung:
+                        st.warning("Bitte geben Sie eine Rollenbezeichnung ein.")
+                    else:
+                        try:
+                            payload = {
+                                "bezeichnung": n_bezeichnung,
+                                "erlaubte_menues": initial_selected
+                            }
+                            if n_ebene.strip():
+                                payload["ebene"] = n_ebene.strip()
+                            
+                            supabase.table("rollen").insert(payload).execute()
+                            st.success(f"Rolle '{n_bezeichnung}' erfolgreich erstellt!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler beim Speichern der Rolle: {e}")
+
+        st.markdown("---")
+
+        # 2. Bestehende Rollen bearbeiten oder löschen
         try:
             rollen_data = supabase.table("rollen").select("*").execute().data or []
         except Exception:
             rollen_data = []
-        
-        if rollen_data:
-            selected_rolle = st.selectbox(
-                "Rolle zur Bearbeitung auswählen", 
+
+        if not rollen_data:
+            st.info("Noch keine eigenen Rollen im System vorhanden. Erstellen Sie oben Ihre erste Rolle.")
+        else:
+            selected_rolle_name = st.selectbox(
+                "Rolle auswählen zum Bearbeiten oder Löschen", 
                 options=[r["bezeichnung"] for r in rollen_data]
             )
             
-            current_role_obj = next((r for r in rollen_data if r["bezeichnung"] == selected_rolle), None)
+            current_role_obj = next((r for r in rollen_data if r["bezeichnung"] == selected_rolle_name), None)
             
             if current_role_obj:
-                st.markdown(f"**Rechtekonfiguration für Rolle:** `{selected_rolle}`")
+                st.markdown(f"#### Rechte bearbeiten für: **{current_role_obj['bezeichnung']}**")
                 
                 current_allowed = current_role_obj.get("erlaubte_menues", [])
                 new_allowed = []
@@ -263,18 +307,29 @@ def render_mitarbeiter_verwaltung(supabase):
                     is_checked = target_col.checkbox(
                         mod_title, 
                         value=(mod_key in current_allowed), 
-                        key=f"perm_{selected_rolle}_{mod_key}"
+                        key=f"perm_edit_{current_role_obj['id']}_{mod_key}"
                     )
                     if is_checked:
                         new_allowed.append(mod_key)
                         
-                if st.button("💾 Rechte für diese Rolle speichern", type="primary", width="stretch"):
-                    try:
-                        supabase.table("rollen").update({"erlaubte_menues": new_allowed}).eq("id", current_role_obj["id"]).execute()
-                        st.success(f"Rechte für Rolle '{selected_rolle}' erfolgreich aktualisiert!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Fehler beim Speichern: {e}")
+                c_save, c_del = st.columns([3, 1])
+                with c_save:
+                    if st.button("💾 Berechtigungen aktualisieren", type="primary", width="stretch"):
+                        try:
+                            supabase.table("rollen").update({"erlaubte_menues": new_allowed}).eq("id", current_role_obj["id"]).execute()
+                            st.success(f"Rechte für Rolle '{selected_rolle_name}' aktualisiert!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler beim Speichern: {e}")
+                
+                with c_del:
+                    if st.button("🗑️ Rolle löschen", width="stretch"):
+                        try:
+                            supabase.table("rollen").delete().eq("id", current_role_obj["id"]).execute()
+                            st.success(f"Rolle '{selected_rolle_name}' gelöscht.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler beim Löschen (wird evt. noch von Mitarbeitern verwendet): {e}")
 
     # -------------------------------------------------------------------------
     # TAB 4: Qualifikationen & Scheine eintragen

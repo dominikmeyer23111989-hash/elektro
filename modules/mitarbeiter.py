@@ -113,7 +113,15 @@ def render_mitarbeiter_verwaltung(supabase):
     
     user = st.session_state.get("user_data", {})
     user_id = user.get("id")
-    is_admin = user.get("rolle") in ["Admin", "Bauleiter", "Büro / Verwaltung"]
+
+    # Dynamische Rechteprüfung für Anträge direkt aus der zugeordneten Rolle des Users laden
+    try:
+        user_db_res = supabase.table("mitarbeiter").select("rollen(darf_antraege_pruefen)").eq("id", user_id).execute()
+        r_info = user_db_res.data[0].get("rollen") if user_db_res.data else {}
+        is_antrag_admin = bool(r_info.get("darf_antraege_pruefen", False)) if r_info else False
+    except Exception:
+        # Fallback: Falls Spalte in Supabase noch fehlt, steuern wir es über die bekannte Admin-Rolle
+        is_antrag_admin = user.get("rolle") in ["Admin", "Bauleiter", "Büro / Verwaltung"]
 
     tab_uebersicht, tab_neu, tab_rollen, tab_urlaub, tab_qualifikationen = st.tabs([
         "📋 Personalstamm & Status", 
@@ -244,9 +252,9 @@ def render_mitarbeiter_verwaltung(supabase):
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
-    # --- TAB 3: Rollen ---
+    # --- TAB 3: Rollen & Rechte (Inklusive Antragsprüfungs-Recht) ---
     with tab_rollen:
-        st.subheader("🔑 Rollen & Rechteverwaltung")
+        st.subheader("🔑 Rollen, Rechte & Genehmigungen")
         try:
             rollen_data = supabase.table("rollen").select("*").execute().data or []
         except Exception:
@@ -254,34 +262,60 @@ def render_mitarbeiter_verwaltung(supabase):
 
         with st.expander("➕ Neue Rolle erstellen"):
             with st.form("neue_rolle"):
-                r_bez = st.text_input("Rollenbezeichnung")
+                r_bez = st.text_input("Rollenbezeichnung *")
+                r_darf_antraege = st.checkbox("Darf Urlaubs- und Abwesenheitsanträge prüfen & genehmigen")
+                
+                st.markdown("**Erlaubte Menü-Module für diese Rolle:**")
                 r_sel = []
                 col_r1, col_r2 = st.columns(2)
                 for idx, (m_k, m_t) in enumerate(ALL_MODULES.items()):
                     if (col_r1 if idx < 5 else col_r2).checkbox(m_t, key=f"r_m_{m_k}"):
                         r_sel.append(m_k)
-                if st.form_submit_button("Rolle speichern"):
+                        
+                if st.form_submit_button("Rolle speichern", type="primary"):
                     if r_bez:
-                        supabase.table("rollen").insert({"bezeichnung": r_bez, "erlaubte_menues": r_sel}).execute()
-                        st.success("Rolle gespeichert!")
-                        st.rerun()
+                        try:
+                            supabase.table("rollen").insert({
+                                "bezeichnung": r_bez, 
+                                "erlaubte_menues": r_sel,
+                                "darf_antraege_pruefen": r_darf_antraege
+                            }).execute()
+                            st.success(f"Rolle '{r_bez}' erfolgreich erstellt!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler beim Speichern (Hinweis: Falls die Spalte 'darf_antraege_pruefen' in Supabase nicht existiert, bitte einmalig im SQL-Editor: ALTER TABLE rollen ADD COLUMN IF NOT EXISTS darf_antraege_pruefen BOOLEAN DEFAULT false; ausführen): {e}")
 
         if rollen_data:
             sel_r = st.selectbox("Rolle bearbeiten", [r["bezeichnung"] for r in rollen_data])
             r_obj = next((r for r in rollen_data if r["bezeichnung"] == sel_r), None)
             if r_obj:
-                cur_m = r_obj.get("erlaubte_menues", [])
-                new_m = []
-                col_a, col_b = st.columns(2)
-                for idx, (m_k, m_t) in enumerate(ALL_MODULES.items()):
-                    if (col_a if idx < 5 else col_b).checkbox(m_t, value=(m_k in cur_m), key=f"edit_r_{r_obj['id']}_{m_k}"):
-                        new_m.append(m_k)
-                if st.button("Rechte aktualisieren", type="primary"):
-                    supabase.table("rollen").update({"erlaubte_menues": new_m}).eq("id", r_obj["id"]).execute()
-                    st.success("Aktualisiert!")
-                    st.rerun()
+                with st.form(f"edit_rolle_form_{r_obj['id']}"):
+                    st.markdown(f"#### Rechte bearbeiten für: **{r_obj['bezeichnung']}**")
+                    
+                    cur_darf = bool(r_obj.get("darf_antraege_pruefen", False))
+                    new_darf = st.checkbox("Darf Urlaubs- und Abwesenheitsanträge prüfen & genehmigen", value=cur_darf)
+                    
+                    st.markdown("---")
+                    st.markdown("**Modul-Berechtigungen:**")
+                    cur_m = r_obj.get("erlaubte_menues", [])
+                    new_m = []
+                    col_a, col_b = st.columns(2)
+                    for idx, (mod_key, mod_title) in enumerate(ALL_MODULES.items()):
+                        if (col_a if idx < 5 else col_b).checkbox(mod_title, value=(mod_key in cur_m), key=f"edit_r_{r_obj['id']}_{mod_key}"):
+                            new_m.append(mod_key)
+                            
+                    if st.form_submit_button("Rollen-Rechte aktualisieren", type="primary"):
+                        try:
+                            supabase.table("rollen").update({
+                                "erlaubte_menues": new_m,
+                                "darf_antraege_pruefen": new_darf
+                            }).eq("id", r_obj["id"]).execute()
+                            st.success("Rechte erfolgreich aktualisiert!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler: {e}")
 
-    # --- TAB 4: Urlaub & Anträge (Integriert mit Ampelsystem, Kontingent & Benachrichtigung) ---
+    # --- TAB 4: Urlaub & Anträge (Mit dynamischer Antrags-Admin-Prüfung) ---
     with tab_urlaub:
         st.subheader("🏖️ Urlaubs- & Abwesenheitsanträge")
 
@@ -294,7 +328,7 @@ def render_mitarbeiter_verwaltung(supabase):
         offene_antraege = [a for a in all_antraege if a.get("status") == "in_bearbeitung"]
         anzahl_offen = len(offene_antraege)
 
-        if is_admin and anzahl_offen > 0:
+        if is_antrag_admin and anzahl_offen > 0:
             st.warning(f"🔔 **Benachrichtigung:** Es gibt **{anzahl_offen} neue/offene Anträge**, die auf Ihre Prüfung warten!")
 
         try:
@@ -332,7 +366,7 @@ def render_mitarbeiter_verwaltung(supabase):
         sub_tab_neu, sub_tab_meine, sub_tab_admin = st.tabs([
             "➕ Neuen Antrag stellen", 
             "📄 Meine Anträge", 
-            f"⚙️ Anträge prüfen ({anzahl_offen} offen)" if is_admin else "🔒 Admin-Ansicht (Gesperrt)"
+            f"⚙️ Anträge prüfen ({anzahl_offen} offen)" if is_antrag_admin else "🔒 Admin-Ansicht (Gesperrt)"
         ])
 
         with sub_tab_neu:
@@ -356,7 +390,7 @@ def render_mitarbeiter_verwaltung(supabase):
                                 "details": grund,
                                 "status": "in_bearbeitung"
                             }).execute()
-                            st.success("Antrag erfolgreich eingereicht! Vorgesetzte wurden benachrichtigt (Status: 🟡 In Bearbeitung).")
+                            st.success("Antrag erfolgreich eingereicht! Zuständige Vorgesetzte wurden benachrichtigt (Status: 🟡 In Bearbeitung).")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler: {e}")
@@ -365,69 +399,4 @@ def render_mitarbeiter_verwaltung(supabase):
             if user_antraege:
                 for a in user_antraege:
                     status = a.get("status")
-                    badge = "🟢 Genehmigt" if status == "genehmigt" else ("🔴 Abgelehnt" if status == "abgelehnt" else "🟡 In Bearbeitung")
-                    with st.expander(f"{badge} | {a.get('art')} vom {a.get('start_datum')} bis {a.get('end_datum')}"):
-                        st.write(f"**Details:** {a.get('details', '-')}")
-                        if status == "abgelehnt" and a.get("ablehnungsgrund"):
-                            st.error(f"**Ablehnungsgrund:** {a.get('ablehnungsgrund')}")
-            else:
-                st.info("Keine Anträge vorhanden.")
-
-        with sub_tab_admin:
-            if is_admin:
-                if all_antraege:
-                    for a in all_antraege:
-                        ma = a.get("mitarbeiter") or {}
-                        ma_name = f"{ma.get('vorname', '')} {ma.get('nachname', '')} (Nr: {ma.get('mitarbeiternummer', '-')})"
-                        status = a.get("status")
-                        badge = "🟢 Genehmigt" if status == "genehmigt" else ("🔴 Abgelehnt" if status == "abgelehnt" else "🟡 In Bearbeitung")
-
-                        with st.expander(f"{badge} | {ma_name} - {a.get('art')} ({a.get('start_datum')} bis {a.get('end_datum')})"):
-                            st.write(f"**Grund:** {a.get('details', '-')}")
-                            with st.form(f"admin_antrag_{a['id']}"):
-                                neu_status = st.selectbox("Status", ["in_bearbeitung", "genehmigt", "abgelehnt"], index=["in_bearbeitung", "genehmigt", "abgelehnt"].index(status))
-                                ablehnung_grund = st.text_input("Ablehnungsgrund (bei Rot erforderlich)", value=a.get("ablehnungsgrund", ""))
-                                if st.form_submit_button("Status speichern", type="primary"):
-                                    supabase.table("antraege").update({
-                                        "status": neu_status,
-                                        "ablehnungsgrund": ablehnung_grund if neu_status == "abgelehnt" else ""
-                                    }).eq("id", a["id"]).execute()
-                                    st.success("Antrag aktualisiert!")
-                                    st.rerun()
-                else:
-                    st.info("Keine Anträge im System.")
-
-    # --- TAB 5: Qualifikationen ---
-    with tab_qualifikationen:
-        st.subheader("Qualifikationen & Scheine")
-        try:
-            ma_list = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer").execute().data or []
-        except Exception:
-            ma_list = []
-
-        if ma_list:
-            sel_ma = st.selectbox("Mitarbeiter wählen", [m["id"] for m in ma_list], format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in ma_list if m["id"] == x), key="q_ma_sel")
-            with st.form("quali_form"):
-                kat = st.selectbox("Kategorie", ["Ausbildung", "Weiterbildung", "Zertifikat", "Sonstiges"])
-                titel = st.text_input("Titel *")
-                d_erh = st.date_input("Erhalten am", value=date.today())
-                d_bis = st.date_input("Gültig bis", value=None)
-                desc = st.text_area("Anmerkung")
-                up_file = st.file_uploader("Nachweis (Bild/PDF)", type=["png", "jpg", "jpeg", "pdf"])
-                
-                if st.form_submit_button("Speichern", type="primary", use_container_width=True):
-                    if titel:
-                        f_url = None
-                        if up_file:
-                            fb, ct, fn = compress_image(up_file)
-                            fp = f"{sel_ma}/{fn}"
-                            supabase.storage.from_("mitarbeiter-dokumente").upload(fp, fb, {"content-type": ct, "upsert": "true"})
-                            f_url = supabase.storage.from_("mitarbeiter-dokumente").get_public_url(fp)
-                        
-                        supabase.table("qualifikationen").insert({
-                            "mitarbeiter_id": sel_ma, "kategorie": kat, "titel": titel,
-                            "datum_erhalten": str(d_erh), "gueltig_bis": str(d_bis) if d_bis else None,
-                            "beschreibung": desc, "dokument_url": f_url
-                        }).execute()
-                        st.success("Gespeichert!")
-                        st.rerun()
+                    badge = "🟢 Genehmigt" if status == "genehmigt" else ("🔴 Abgelehnt" if status == "

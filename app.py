@@ -4,7 +4,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from modules.mitarbeiter import render_mitarbeiter_verwaltung, ALL_MODULES
 from modules.zeiterfassung import render_zeiterfassung
-from modules.steuerberater import render_steuerberater
+from modules.steuerberater 
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 

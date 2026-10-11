@@ -1,0 +1,6 @@
+streamlit
+supabase
+extra-streamlit-components
+pandas
+fpdf2
+streamlit-drawable-canvas

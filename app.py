@@ -185,7 +185,7 @@ def render_app():
     selected_main = st.sidebar.selectbox(
         "Hauptmenü",
         options=list(available_menus.keys()),
-        format_func=lambda x: available_menus[x]["title"]
+        format_func=lambda x: available_menus[x]
     )
 
     # --- ROUTING DER MODULE ---
@@ -193,7 +193,7 @@ def render_app():
         if selected_main == "1":
             render_mitarbeiter_verwaltung(supabase)
         else:
-            st.title(available_menus[selected_main]["title"])
+            st.title(available_menus[selected_main])
             st.info("Dieses Modul wird als Nächstes ausgebaut.")
 
 # -----------------------------------------------------------------------------

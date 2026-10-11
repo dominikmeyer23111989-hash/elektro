@@ -283,7 +283,8 @@ def render_app():
         st.sidebar.markdown("🔴 **Status:** Ausgestempelt")
         if st.sidebar.button("🟢 Einstempeln", use_container_width=True, type="primary"):
             try:
-                jetzt = datetime.now().isoformat()
+                # Lokale Zeit verwenden statt UTC
+                jetzt = datetime.now().isoformat(timespec='seconds')
                 supabase.table("zeiterfassung").insert({
                     "mitarbeiter_id": user_id,
                     "einstempeln": jetzt
@@ -293,14 +294,15 @@ def render_app():
             except Exception as e:
                 st.error(f"Fehler: {e}")
     else:
-        ein_zeit = datetime.fromisoformat(offener_eintrag["einstempeln"].replace('Z', '+00:00')).strftime("%H:%M")
+        ein_zeit = datetime.fromisoformat(offener_eintrag["einstempeln"].replace('Z', '')).strftime("%H:%M")
         st.sidebar.markdown(f"🟢 **Status:** Eingestempelt seit {ein_zeit} Uhr")
         
         with st.sidebar.form("sidebar_ausstempeln_form"):
             sb_pause = st.number_input("Pause (Min)", min_value=0, max_value=120, value=std_pause, step=5)
             if st.form_submit_button("🔴 Ausstempeln", use_container_width=True, type="primary"):
                 try:
-                    jetzt_aus = datetime.now().isoformat()
+                    # Lokale Zeit verwenden statt UTC
+                    jetzt_aus = datetime.now().isoformat(timespec='seconds')
                     supabase.table("zeiterfassung").update({
                         "ausstempeln": jetzt_aus,
                         "pause_minuten": sb_pause

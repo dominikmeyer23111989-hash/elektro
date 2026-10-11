@@ -6,7 +6,11 @@ from fpdf import FPDF
 from PIL import Image
 from io import BytesIO
 
-st.set_page_config(page_title="Elektro-Enterprise Portal", page_icon="⚡", layout="wide")
+st.set_page_config(
+    page_title="Elektro-Enterprise Portal", 
+    page_icon="⚡", 
+    layout="wide"
+)
 
 # -----------------------------------------------------------------------------
 # Deutsches Datums- und Zeit-Format Hilfsfunktionen
@@ -77,6 +81,7 @@ try:
 except Exception as e:
     st.error(f"Fehler bei der Verbindung zu Supabase: {e}")
 
+# Session State sicher initialisieren
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "user_data" not in st.session_state:
@@ -88,9 +93,17 @@ if "user_data" not in st.session_state:
 class PersonalaktePDF(FPDF):
     def header(self):
         self.set_font('Helvetica', 'B', 16)
-        self.cell(0, 10, 'ELEKTRO-ENTERPRISE - DIGITALE PERSONALAKTE', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
+        self.cell(
+            0, 10, 
+            'ELEKTRO-ENTERPRISE - DIGITALE PERSONALAKTE', 
+            border=False, new_x="LMARGIN", new_y="NEXT", align='C'
+        )
         self.set_font('Helvetica', 'I', 10)
-        self.cell(0, 5, 'Vertrauliches Personaldokument (DSGVO-geschützt)', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
+        self.cell(
+            0, 5, 
+            'Vertrauliches Personaldokument (DSGVO-geschützt)', 
+            border=False, new_x="LMARGIN", new_y="NEXT", align='C'
+        )
         self.ln(5)
 
     def footer(self):
@@ -104,12 +117,18 @@ def generate_mitarbeiter_pdf(mitarbeiter_data, qualifikationen):
     pdf.set_font('Helvetica', '', 11)
     
     pdf.set_font('Helvetica', 'B', 14)
-    pdf.cell(0, 8, f"{mitarbeiter_data.get('vorname', '')} {mitarbeiter_data.get('nachname', '')}", new_x="LMARGIN", new_y="NEXT")
+    v_name = mitarbeiter_data.get('vorname', '')
+    n_name = mitarbeiter_data.get('nachname', '')
+    pdf.cell(0, 8, f"{v_name} {n_name}", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 11)
     
+    rolle_txt = "-"
+    if mitarbeiter_data.get('rollen'):
+        rolle_txt = str(mitarbeiter_data.get('rollen', {}).get('bezeichnung', '-'))
+
     fields = [
         ("Mitarbeiternummer:", str(mitarbeiter_data.get('mitarbeiternummer', '-'))),
-        ("Rolle im Betrieb:", str(mitarbeiter_data.get('rollen', {}).get('bezeichnung', '-') if mitarbeiter_data.get('rollen') else '-')),
+        ("Rolle im Betrieb:", rolle_txt),
         ("Geburtsdatum:", format_datum(mitarbeiter_data.get('geburtsdatum'))),
         ("Tätig seit:", format_datum(mitarbeiter_data.get('taetig_seit'))),
         ("E-Mail:", str(mitarbeiter_data.get('email', '-'))),
@@ -199,7 +218,10 @@ def render_mitarbeiter_verwaltung():
                 selected_ma_id = st.selectbox(
                     "Mitarbeiter auswählen", 
                     options=[m["id"] for m in mitarbeiter_liste],
-                    format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in mitarbeiter_liste if m["id"] == x)
+                    format_func=lambda x: next(
+                        f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" 
+                        for m in mitarbeiter_liste if m["id"] == x
+                    )
                 )
                 
                 selected_ma = next(m for m in mitarbeiter_liste if m["id"] == selected_ma_id)
@@ -224,4 +246,213 @@ def render_mitarbeiter_verwaltung():
     with tab_neu:
         st.subheader("Neuen Mitarbeiter im System anlegen")
         try:
-            rollen_res =
+            rollen_res = supabase.table("rollen").select("*").execute()
+            rollen_dict = {r["bezeichnung"]: r["id"] for r in rollen_res.data} if rollen_res.data else {}
+        except Exception:
+            rollen_dict = {}
+
+        with st.form("neuer_mitarbeiter_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                mitarbeiternr = st.text_input("Mitarbeiternummer *", placeholder="z. B. 1005")
+                vorname = st.text_input("Vorname *")
+                nachname = st.text_input("Nachname *")
+                geburtsdatum = st.date_input("Geburtsdatum", value=date(1990, 1, 1), format="DD.MM.YYYY")
+                taetig_seit = st.date_input("Im Unternehmen tätig seit", value=date.today(), format="DD.MM.YYYY")
+            with col2:
+                rolle_bezeichnung = st.selectbox("Rolle / Funktion *", list(rollen_dict.keys()) if rollen_dict else ["Admin"])
+                passwort = st.text_input("Erst-Passwort / PIN *", type="password")
+                notfall_pin = st.text_input("4-stellige Notfall-PIN (für Self-Service Reset)", type="password", max_chars=4, placeholder="z. B. 4321")
+                email = st.text_input("E-Mail-Adresse (optional)")
+                telefon = st.text_input("Telefonnummer (optional)")
+                adresse = st.text_area("Anschrift (optional)")
+                
+            submitted = st.form_submit_button("Mitarbeiter anlegen", type="primary", use_container_width=True)
+            if submitted:
+                if not mitarbeiternr or not vorname or not nachname or not passwort:
+                    st.warning("Bitte füllen Sie alle Pflichtfelder (*) aus.")
+                else:
+                    try:
+                        rec_code = f"REC-{mitarbeiternr}-88"
+                        data = {
+                            "mitarbeiternummer": mitarbeiternr,
+                            "vorname": vorname,
+                            "nachname": nachname,
+                            "geburtsdatum": str(geburtsdatum),
+                            "taetig_seit": str(taetig_seit),
+                            "rolle_id": rollen_dict.get(rolle_bezeichnung),
+                            "pin_hash": passwort,
+                            "notfall_pin": notfall_pin,
+                            "recovery_code": rec_code,
+                            "email": email,
+                            "telefon": telefon,
+                            "adresse": adresse,
+                            "ist_aktiv": True
+                        }
+                        supabase.table("mitarbeiter").insert(data).execute()
+                        st.success(f"Mitarbeiter {vorname} {nachname} erfolgreich angelegt!")
+                        st.info(f"💡 Generierter Recovery-Code für Notfälle: `{rec_code}`")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler beim Anlegen: {e}")
+
+    # --- TAB 3: Rollen & Rechte ---
+    with tab_rollen:
+        st.subheader("Rollen- & Rechteverwaltung")
+        try:
+            rollen_data = supabase.table("rollen").select("*").execute().data or []
+        except Exception:
+            rollen_data = []
+
+        if rollen_data:
+            selected_rolle = st.selectbox("Rolle wählen", options=[r["bezeichnung"] for r in rollen_data])
+            current_role_obj = next((r for r in rollen_data if r["bezeichnung"] == selected_rolle), None)
+            
+            if current_role_obj:
+                current_allowed = current_role_obj.get("erlaubte_menues", [])
+                new_allowed = []
+                col_a, col_b = st.columns(2)
+                for idx, (mod_key, mod_title) in enumerate(ALL_MODULES.items()):
+                    target_col = col_a if idx < 5 else col_b
+                    if target_col.checkbox(mod_title, value=(mod_key in current_allowed), key=f"perm_{selected_rolle}_{mod_key}"):
+                        new_allowed.append(mod_key)
+                        
+                if st.button("💾 Rechte für diese Rolle speichern", type="primary"):
+                    try:
+                        supabase.table("rollen").update({"erlaubte_menues": new_allowed}).eq("id", current_role_obj["id"]).execute()
+                        st.success(f"Rechte für '{selected_rolle}' aktualisiert!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler beim Speichern: {e}")
+
+    # --- TAB 4: Qualifikationen & Scheine mit Komprimierung ---
+    with tab_qualifikationen:
+        st.subheader("Qualifikationen, Fortbildungen & Scheine")
+        try:
+            ma_list = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer").execute().data or []
+        except Exception:
+            ma_list = []
+
+        if ma_list:
+            sel_ma_id = st.selectbox(
+                "Mitarbeiter wählen", 
+                options=[m["id"] for m in ma_list],
+                format_func=lambda x: next(
+                    f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" 
+                    for m in ma_list if m["id"] == x
+                )
+            )
+            with st.form("qualifikation_form"):
+                kategorie = st.selectbox("Kategorie", ["Ausbildung", "Weiterbildung", "Zertifikat / Schein", "Sonstiges"])
+                titel = st.text_input("Bezeichnung / Titel *", placeholder="z. B. Ersthelfer, DGUV V3 Prüfschein")
+                col_d1, col_d2 = st.columns(2)
+                datum_erhalten = col_d1.date_input("Erhalten am", value=date.today(), format="DD.MM.YYYY")
+                gueltig_bis = col_d2.date_input("Gültig bis (optional)", value=None, format="DD.MM.YYYY")
+                beschreibung = st.text_area("Freitext / Anmerkung")
+                uploaded_file = st.file_uploader("Upload Nachweis-Foto oder PDF", type=["png", "jpg", "jpeg", "pdf"])
+                
+                if st.form_submit_button("Qualifikation speichern", type="primary"):
+                    if not titel:
+                        st.warning("Bitte Titel angeben.")
+                    else:
+                        file_url = None
+                        if uploaded_file is not None:
+                            try:
+                                file_bytes, content_type, file_name = compress_image(uploaded_file)
+                                file_path = f"{sel_ma_id}/{file_name}"
+                                
+                                supabase.storage.from_("mitarbeiter-dokumente").upload(
+                                    file_path, 
+                                    file_bytes, 
+                                    {"content-type": content_type, "upsert": "true"}
+                                )
+                                file_url = supabase.storage.from_("mitarbeiter-dokumente").get_public_url(file_path)
+                            except Exception as e_up:
+                                st.warning(f"Upload-Hinweis: {e_up}")
+
+                        q_data = {
+                            "mitarbeiter_id": sel_ma_id,
+                            "kategorie": kategorie,
+                            "titel": titel,
+                            "datum_erhalten": str(datum_erhalten) if datum_erhalten else None,
+                            "gueltig_bis": str(gueltig_bis) if gueltig_bis else None,
+                            "beschreibung": beschreibung,
+                            "dokument_url": file_url
+                        }
+                        supabase.table("qualifikationen").insert(q_data).execute()
+                        st.success("Qualifikation eingetragen!")
+                        st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### 📜 Hinterlegte Qualifikationen")
+            try:
+                existing_q = supabase.table("qualifikationen").select("*").eq("mitarbeiter_id", sel_ma_id).execute().data or []
+            except Exception:
+                existing_q = []
+
+            if existing_q:
+                for q in existing_q:
+                    with st.expander(f"{q['kategorie']}: {q['titel']} (Erhalten am: {format_datum(q.get('datum_erhalten'))})"):
+                        st.write(f"**Gültig bis:** {format_datum(q.get('gueltig_bis'))}")
+                        st.write(f"**Beschreibung:** {q.get('beschreibung', '-')}")
+                        if q.get("dokument_url"):
+                            st.markdown(f"[📄 Nachweis-Dokument / Foto öffnen]({q['dokument_url']})")
+            else:
+                st.info("Für diesen Mitarbeiter wurden noch keine Qualifikationen erfasst.")
+
+# -----------------------------------------------------------------------------
+# 4. Login-System mit Self-Service Wiederherstellungs-Reiter
+# -----------------------------------------------------------------------------
+def render_login():
+    st.title("⚡ Elektro-Enterprise System")
+    st.caption("Willkommen! Bitte melden Sie sich an.")
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        tab_login, tab_reset = st.tabs(["🔑 Login", "🆘 Passwort vergessen"])
+
+        # --- TAB 1: Login ---
+        with tab_login:
+            with st.form("login_form"):
+                identifier = st.text_input("Mitarbeiternummer oder Vorname.Nachname", placeholder="z. B. 1000")
+                password = st.text_input("Passwort / PIN", type="password")
+                
+                submitted = st.form_submit_button("Anmelden", type="primary", use_container_width=True)
+
+                if submitted:
+                    if not identifier or not password:
+                        st.warning("Bitte füllen Sie alle Felder aus.")
+                    else:
+                        try:
+                            res = supabase.table("mitarbeiter").select("*, rollen(*)").eq("ist_aktiv", True).eq("mitarbeiternummer", identifier).execute()
+                            
+                            if not res.data and "." in identifier:
+                                parts = identifier.split(".", 1)
+                                res = supabase.table("mitarbeiter").select("*, rollen(*)").eq("ist_aktiv", True).ilike("vorname", parts[0]).ilike("nachname", parts[1]).execute()
+
+                            if not res.data:
+                                st.error("Mitarbeiter nicht gefunden oder Konto inaktiv.")
+                                return
+                            
+                            user_rec = res.data[0]
+                            if str(user_rec.get("pin_hash")) == str(password):
+                                rolle_info = user_rec.get("rollen") or {}
+                                f_rolle = rolle_info.get("bezeichnung", "Admin")
+                                f_ebene = rolle_info.get("ebene", "buero")
+                                f_rechte = rolle_info.get("erlaubte_menues") or ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+
+                                st.session_state["authenticated"] = True
+                                st.session_state["user_data"] = {
+                                    "id": user_rec["id"],
+                                    "mitarbeiternummer": user_rec.get("mitarbeiternummer", "-"),
+                                    "name": f"{user_rec.get('vorname', '')} {user_rec.get('nachname', '')}".strip(),
+                                    "rolle": f_rolle,
+                                    "ebene": f_ebene,
+                                    "rechte": f_rechte
+                                }
+                                st.success("Erfolgreich angemeldet!")
+                                st.rerun()
+                            else:
+                                st.error("Ungültiges Passwort.")
+                        except Exception as e:
+                            st.

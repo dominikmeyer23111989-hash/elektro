@@ -209,7 +209,7 @@ def render_mitarbeiter_verwaltung():
                     "Status": "🟢 Aktiv" if m.get("ist_aktiv") else "🔴 Inaktiv"
                 } for m in mitarbeiter_liste])
                 
-                st.dataframe(display_df, use_container_width=True)
+                st.dataframe(display_df, width="stretch")
                 
                 st.markdown("---")
                 st.subheader("📄 Personalakte als PDF exportieren")
@@ -266,7 +266,7 @@ def render_mitarbeiter_verwaltung():
                 telefon = st.text_input("Telefonnummer (optional)")
                 adresse = st.text_area("Anschrift (optional)")
                 
-            submitted = st.form_submit_button("Mitarbeiter anlegen", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Mitarbeiter anlegen", type="primary", width="stretch")
             if submitted:
                 if not mitarbeiternr or not vorname or not nachname or not passwort:
                     st.warning("Bitte füllen Sie alle Pflichtfelder (*) aus.")
@@ -400,7 +400,7 @@ def render_mitarbeiter_verwaltung():
                 st.info("Für diesen Mitarbeiter wurden noch keine Qualifikationen erfasst.")
 
 # -----------------------------------------------------------------------------
-# 4. Login-System mit Self-Service Wiederherstellung
+# 4. Login-System
 # -----------------------------------------------------------------------------
 def render_login():
     st.title("⚡ Elektro-Enterprise System")
@@ -416,7 +416,7 @@ def render_login():
                 identifier = st.text_input("Mitarbeiternummer oder Vorname.Nachname", placeholder="z. B. 1000")
                 password = st.text_input("Passwort / PIN", type="password")
                 
-                submitted = st.form_submit_button("Anmelden", type="primary", use_container_width=True)
+                submitted = st.form_submit_button("Anmelden", type="primary", width="stretch")
 
                 if submitted:
                     if not identifier or not password:
@@ -456,4 +456,125 @@ def render_login():
                         except Exception as e:
                             st.error(f"Login-Fehler: {e}")
 
-        # --- TAB 2: Autonom
+        # --- TAB 2: Autonomes Passwort-Zurücksetzen ---
+        with tab_reset:
+            st.markdown("##### Self-Service Wiederherstellung")
+            st.caption("Setzen Sie Ihr Passwort direkt über Ihre Notfall-PIN oder Ihren Recovery-Code zurück.")
+
+            with st.form("reset_form"):
+                reset_ma_nr = st.text_input("Mitarbeiternummer *", placeholder="z. B. 1000")
+                method = st.radio("Verifizierungsmethode", ["Notfall-PIN & Geburtsdatum", "Master-Recovery-Code"])
+                
+                if method == "Notfall-PIN & Geburtsdatum":
+                    geburtsdatum = st.date_input("Geburtsdatum zur Verifizierung", value=date(1990, 1, 1), format="DD.MM.YYYY")
+                    notfall_pin = st.text_input("Ihre 4-stellige Notfall-PIN", type="password")
+                    secret_check = str(notfall_pin)
+                else:
+                    recovery_code = st.text_input("Master-Recovery-Code", placeholder="z. B. REC-1000-88")
+                    secret_check = str(recovery_code)
+
+                st.markdown("---")
+                new_pw = st.text_input("Neues Passwort vergeben *", type="password")
+                new_pw_confirm = st.text_input("Neues Passwort wiederholen *", type="password")
+
+                btn_reset = st.form_submit_button("Passwort jetzt zurücksetzen", type="primary", width="stretch")
+
+                if btn_reset:
+                    if not reset_ma_nr or not new_pw or not secret_check:
+                        st.warning("Bitte füllen Sie alle erforderlichen Felder aus.")
+                    elif new_pw != new_pw_confirm:
+                        st.error("Die eingegebenen Passwörter stimmen nicht überein.")
+                    elif len(new_pw) < 4:
+                        st.error("Das neue Passwort muss mindestens 4 Zeichen lang sein.")
+                    else:
+                        try:
+                            res = supabase.table("mitarbeiter").select("*").eq("mitarbeiternummer", reset_ma_nr).eq("ist_aktiv", True).execute()
+                            if not res.data:
+                                st.error("Mitarbeiternummer ungültig.")
+                                return
+                            
+                            ma_rec = res.data[0]
+                            verified = False
+
+                            if method == "Notfall-PIN & Geburtsdatum":
+                                ma_geb = str(ma_rec.get("geburtsdatum", ""))
+                                ma_pin = str(ma_rec.get("notfall_pin", ""))
+                                if ma_geb == str(geburtsdatum) and ma_pin == notfall_pin and notfall_pin != "":
+                                    verified = True
+                            else:
+                                ma_code = str(ma_rec.get("recovery_code", ""))
+                                if ma_code == recovery_code and recovery_code != "":
+                                    verified = True
+
+                            if verified:
+                                supabase.table("mitarbeiter").update({"pin_hash": new_pw}).eq("id", ma_rec["id"]).execute()
+                                st.success("Ihr Passwort wurde erfolgreich geändert! Sie können sich jetzt anmelden.")
+                            else:
+                                st.error("Verifizierung fehlgeschlagen: Sicherheitsdaten falsch.")
+
+                        except Exception as e:
+                            st.error(f"Fehler beim Zurücksetzen: {e}")
+
+# -----------------------------------------------------------------------------
+# 5. Hauptanwendung
+# -----------------------------------------------------------------------------
+def render_app():
+    user = st.session_state.get("user_data")
+    if not user:
+        st.session_state["authenticated"] = False
+        st.rerun()
+        return
+    
+    # Vorname extrahieren
+    full_name = user.get("name", "Mitarbeiter")
+    vorname = full_name.split()[0] if full_name else "Mitarbeiter"
+
+    st.sidebar.title("⚡ Elektro-Portal")
+    st.sidebar.markdown(f"### Hallo, {vorname}! 👋")
+    st.sidebar.write(f"**{full_name}**")
+    st.sidebar.caption(f"Nr: {user.get('mitarbeiternummer', '-')} | Rolle: {user.get('rolle', '-')}")
+    
+    if st.sidebar.button("🚪 Abmelden", width="stretch"):
+        st.session_state["authenticated"] = False
+        st.session_state["user_data"] = None
+        st.rerun()
+
+    st.sidebar.markdown("---")
+
+    menu_structure = {
+        "1": {"title": "👨‍💼 1. Mitarbeiterverwaltung", "sub": ["Verwaltung"]},
+        "2": {"title": "📦 2. Lagerverwaltung", "sub": ["Materialbestand"]},
+        "3": {"title": "⏱️ 3. Zeiterfassung", "sub": ["Stundenzettel"]},
+        "4": {"title": "📋 4. Aufträge", "sub": ["Auftragsübersicht"]},
+        "5": {"title": "👥 5. Kunden", "sub": ["Kundenstamm"]},
+        "6": {"title": "🚛 6. Fahrzeuge", "sub": ["Fuhrparkliste"]},
+        "7": {"title": "🏢 7. Gebäude", "sub": ["Anlagenregister"]},
+        "8": {"title": "📁 8. Dokumente", "sub": ["Schaltpläne"]},
+        "9": {"title": "💶 9. Finanzen / Monitor", "sub": ["Rechnungen"]}
+    }
+
+    allowed_menu_keys = user.get("rechte", [])
+    available_menus = {k: v for k, v in menu_structure.items() if k in allowed_menu_keys}
+
+    if not available_menus:
+        st.warning("Keine zugewiesenen Menürechte gefunden.")
+        return
+
+    selected_main = st.sidebar.selectbox(
+        "Hauptmenü",
+        options=list(available_menus.keys()),
+        format_func=lambda x: available_menus[x]["title"]
+    )
+
+    if selected_main:
+        if selected_main == "1":
+            render_mitarbeiter_verwaltung()
+        else:
+            st.title(available_menus[selected_main]["title"])
+            st.info("Dieses Modul wird als Nächstes ausgebaut.")
+
+# Control Flow
+if not st.session_state.get("authenticated", False):
+    render_login()
+else:
+    render_app()

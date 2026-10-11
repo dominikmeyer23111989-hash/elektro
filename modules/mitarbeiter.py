@@ -172,8 +172,6 @@ def render_mitarbeiter_verwaltung(supabase):
                         neuer_status = st.checkbox("Account ist aktiv (Login erlaubt)", value=selected_ma.get("ist_aktiv", True))
 
                     st.markdown("##### 📅 Tägliche Soll-Stunden (Wochenmodell)")
-                    st.caption("Legen Sie fest, wie viele Stunden an welchem Wochentag regulär gearbeitet werden (z. B. Freitags kürzer).")
-                    
                     col_w1, col_w2, col_w3, col_w4, col_w5 = st.columns(5)
                     soll_mo = col_w1.number_input("Mo", 0.0, 12.0, float(selected_ma.get("soll_mo", 8.0)), 0.5)
                     soll_di = col_w2.number_input("Di", 0.0, 12.0, float(selected_ma.get("soll_di", 8.0)), 0.5)
@@ -439,4 +437,82 @@ def render_mitarbeiter_verwaltung(supabase):
                                 "mitarbeiter_id": user_id,
                                 "art": art,
                                 "start_datum": str(start_datum),
-                                "end_datum": str(end_datum),"
+                                "end_datum": str(end_datum),
+                                "details": grund,
+                                "status": "in_bearbeitung"
+                            }).execute()
+                            st.success("Antrag erfolgreich eingereicht! Zuständige Vorgesetzte wurden benachrichtigt (Status: 🟡 In Bearbeitung).")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler: {e}")
+
+        with sub_tab_meine:
+            if user_antraege:
+                for a in user_antraege:
+                    status = a.get("status")
+                    badge = "🟢 Genehmigt" if status == "genehmigt" else ("🔴 Abgelehnt" if status == "abgelehnt" else "🟡 In Bearbeitung")
+                    with st.expander(f"{badge} | {a.get('art')} vom {a.get('start_datum')} bis {a.get('end_datum')}"):
+                        st.write(f"**Details:** {a.get('details', '-')}")
+                        if status == "abgelehnt" and a.get("ablehnungsgrund"):
+                            st.error(f"**Ablehnungsgrund:** {a.get('ablehnungsgrund')}")
+            else:
+                st.info("Keine Anträge vorhanden.")
+
+        with sub_tab_admin:
+            if is_antrag_admin:
+                if all_antraege:
+                    for a in all_antraege:
+                        ma = a.get("mitarbeiter") or {}
+                        ma_name = f"{ma.get('vorname', '')} {ma.get('nachname', '')} (Nr: {ma.get('mitarbeiternummer', '-')})"
+                        status = a.get("status")
+                        badge = "🟢 Genehmigt" if status == "genehmigt" else ("🔴 Abgelehnt" if status == "abgelehnt" else "🟡 In Bearbeitung")
+
+                        with st.expander(f"{badge} | {ma_name} - {a.get('art')} ({a.get('start_datum')} bis {a.get('end_datum')})"):
+                            st.write(f"**Grund:** {a.get('details', '-')}")
+                            with st.form(f"admin_antrag_{a['id']}"):
+                                neu_status = st.selectbox("Status", ["in_bearbeitung", "genehmigt", "abgelehnt"], index=["in_bearbeitung", "genehmigt", "abgelehnt"].index(status))
+                                ablehnung_grund = st.text_input("Ablehnungsgrund (bei Rot erforderlich)", value=a.get("ablehnungsgrund", ""))
+                                if st.form_submit_button("Status speichern", type="primary"):
+                                    supabase.table("antraege").update({
+                                        "status": neu_status,
+                                        "ablehnungsgrund": ablehnung_grund if neu_status == "abgelehnt" else ""
+                                    }).eq("id", a["id"]).execute()
+                                    st.success("Antrag aktualisiert!")
+                                    st.rerun()
+                else:
+                    st.info("Keine Anträge im System.")
+
+    # --- TAB 5: Qualifikationen ---
+    with tab_qualifikationen:
+        st.subheader("Qualifikationen & Scheine")
+        try:
+            ma_list = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer").execute().data or []
+        except Exception:
+            ma_list = []
+
+        if ma_list:
+            sel_ma = st.selectbox("Mitarbeiter wählen", [m["id"] for m in ma_list], format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in ma_list if m["id"] == x), key="q_ma_sel")
+            with st.form("quali_form"):
+                kat = st.selectbox("Kategorie", ["Ausbildung", "Weiterbildung", "Zertifikat", "Sonstiges"])
+                titel = st.text_input("Titel *")
+                d_erh = st.date_input("Erhalten am", value=date.today())
+                d_bis = st.date_input("Gültig bis", value=None)
+                desc = st.text_area("Anmerkung")
+                up_file = st.file_uploader("Nachweis (Bild/PDF)", type=["png", "jpg", "jpeg", "pdf"])
+                
+                if st.form_submit_button("Speichern", type="primary", use_container_width=True):
+                    if titel:
+                        f_url = None
+                        if up_file:
+                            fb, ct, fn = compress_image(up_file)
+                            fp = f"{sel_ma}/{fn}"
+                            supabase.storage.from_("mitarbeiter-dokumente").upload(fp, fb, {"content-type": ct, "upsert": "true"})
+                            f_url = supabase.storage.from_("mitarbeiter-dokumente").get_public_url(fp)
+                        
+                        supabase.table("qualifikationen").insert({
+                            "mitarbeiter_id": sel_ma, "kategorie": kat, "titel": titel,
+                            "datum_erhalten": str(d_erh), "gueltig_bis": str(d_bis) if d_bis else None,
+                            "beschreibung": desc, "dokument_url": f_url
+                        }).execute()
+                        st.success("Gespeichert!")
+                        st.rerun()

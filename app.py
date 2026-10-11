@@ -145,4 +145,4 @@ def generate_mitarbeiter_pdf(mitarbeiter_data, qualifikationen):
         
         pdf.set_font('Helvetica', '', 9)
         for q in qualifikationen:
-            pdf.cell(40, 6
+            pdf.

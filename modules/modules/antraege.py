@@ -32,7 +32,6 @@ def render_antraege_modul(supabase):
                 start = date.fromisoformat(a.get("start_datum"))
                 ende = date.fromisoformat(a.get("end_datum"))
                 if start.year == current_year:
-                    # Einfache Tag-Differenz (inklusive)
                     berechnete_tage += (ende - start).days + 1
             except Exception:
                 pass
@@ -76,7 +75,7 @@ def render_antraege_modul(supabase):
                             "start_datum": str(start_datum),
                             "end_datum": str(end_datum),
                             "details": grund,
-                            "status": "in_bearbeitung"  # Startet immer auf Gelb (In Bearbeitung)
+                            "status": "in_bearbeitung"
                         }
                         supabase.table("antraege").insert(payload).execute()
                         st.success("Antrag erfolgreich eingereicht! Status: 🟡 In Bearbeitung")

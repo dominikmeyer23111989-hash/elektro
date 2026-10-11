@@ -193,35 +193,4 @@ def render_mitarbeiter_verwaltung():
                     "Name": f"{m.get('vorname')} {m.get('nachname')}",
                     "Rolle": m.get("rollen", {}).get("bezeichnung", "-") if m.get("rollen") else "-",
                     "Tätig seit": format_datum(m.get("taetig_seit")),
-                    "Geburtsdatum": format_datum(m.get("geburtsdatum")),
-                    "Telefon": m.get("telefon", "-"),
-                    "Status": "🟢 Aktiv" if m.get("ist_aktiv") else "🔴 Inaktiv"
-                } for m in mitarbeiter_liste])
-                
-                st.dataframe(display_df, use_container_width=True)
-                
-                st.markdown("---")
-                st.subheader("📄 Personalakte als PDF exportieren")
-                
-                selected_ma_id = st.selectbox(
-                    "Mitarbeiter auswählen", 
-                    options=[m["id"] for m in mitarbeiter_liste],
-                    format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in mitarbeiter_liste if m["id"] == x)
-                )
-                
-                selected_ma = next(m for m in mitarbeiter_liste if m["id"] == selected_ma_id)
-                q_res = supabase.table("qualifikationen").select("*").eq("mitarbeiter_id", selected_ma_id).execute()
-                qualis = q_res.data or []
-                
-                pdf_bytes = generate_mitarbeiter_pdf(selected_ma, qualis)
-                
-                st.download_button(
-                    label=f"📥 Personalakte von {selected_ma['vorname']} {selected_ma['nachname']} herunterladen (PDF)",
-                    data=bytes(pdf_bytes),
-                    file_name=f"Personalakte_{selected_ma['mitarbeiternummer']}_{selected_ma['nachname']}.pdf",
-                    mime="application/pdf",
-                    type="primary"
-                )
-            else:
-                st.info("Noch keine Mitarbeiter erfasst.")
-        except Exception as e
+                    "Geburtsdatum": format_datum(m.

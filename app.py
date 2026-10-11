@@ -2,6 +2,7 @@ import streamlit as st
 from supabase import create_client, Client
 from datetime import date
 from modules.mitarbeiter import render_mitarbeiter_verwaltung, ALL_MODULES
+from modules.zeiterfassung import render_zeiterfassung
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
@@ -229,7 +230,7 @@ def render_mein_profil(supabase):
                 if not alt_passwort or not neues_passwort or not neues_passwort_wwh:
                     st.warning("Bitte füllen Sie alle Passwort-Felder aus.")
                 elif neues_passwort != neues_passwort_wwh:
-                    st.error("Dass die neuen Passwörter stimmen nicht überein.")
+                    st.error("Die neuen Passwörter stimmen nicht überein.")
                 elif len(neues_passwort) < 4:
                     st.error("Das neue Passwort muss mindestens 4 Zeichen lang sein.")
                 else:
@@ -291,6 +292,8 @@ def render_app():
         if selected_main:
             if selected_main == "1":
                 render_mitarbeiter_verwaltung(supabase)
+            elif selected_main == "3":
+                render_zeiterfassung(supabase)
             else:
                 st.title(available_menus[selected_main])
                 st.info("Dieses Modul wird als Nächstes ausgebaut.")

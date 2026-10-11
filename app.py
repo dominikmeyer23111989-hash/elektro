@@ -226,4 +226,7 @@ def render_mitarbeiter_verwaltung():
             new_allowed = []
             col_a, col_b = st.columns(2)
             for idx, (mod_key, mod_title) in enumerate(ALL_MODULES.items()):
-                target_col = col_a if idx <
+                # Aufteilung der 9 Module auf 2 Spalten
+                target_col = col_a if idx < 5 else col_b
+                if target_col.checkbox(mod_title, value=(mod_key in current_allowed), key=f"perm_{selected_rolle}_{mod_key}"):
+                    new_allowed.append(mod_key)

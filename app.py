@@ -4,6 +4,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from modules.mitarbeiter import render_mitarbeiter_verwaltung, ALL_MODULES
 from modules.zeiterfassung import render_zeiterfassung
+from modules.steuerberater import render_steuerberater_export
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
@@ -73,7 +74,7 @@ def render_login():
                                 rolle_info = user_rec.get("rollen") or {}
                                 f_rolle = rolle_info.get("bezeichnung", "Admin")
                                 f_ebene = rolle_info.get("ebene", "buero")
-                                f_rechte = rolle_info.get("erlaubte_menues") or ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+                                f_rechte = rolle_info.get("erlaubte_menues") or ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 
                                 st.session_state["authenticated"] = True
                                 st.session_state["user_data"] = {
@@ -331,8 +332,10 @@ def render_app():
     if menu_selection == "👤 Mein Profil & Einstellungen":
         render_mein_profil(supabase)
     else:
-        allowed_menu_keys = user.get("rechte", [])
-        available_menus = {k: v for k, v in ALL_MODULES.items() if k in allowed_menu_keys}
+        # Erweitere das ALL_MODULES-Dictionary dynamisch um den Steuerberater-Export
+        extended_modules = {**ALL_MODULES, "10": "10. Steuerberater-Export"}
+        allowed_menu_keys = user.get("rechte", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
+        available_menus = {k: v for k, v in extended_modules.items() if k in allowed_menu_keys}
 
         if not available_menus:
             st.warning("Noch keine zugewiesenen Menürechte gefunden. Bitte wenden Sie sich an den Administrator.")
@@ -349,6 +352,8 @@ def render_app():
                 render_mitarbeiter_verwaltung(supabase)
             elif selected_main == "3":
                 render_zeiterfassung(supabase)
+            elif selected_main == "10":
+                render_steuerberater_export(supabase)
             else:
                 st.title(available_menus[selected_main])
                 st.info("Dieses Modul wird als Nächstes ausgebaut.")

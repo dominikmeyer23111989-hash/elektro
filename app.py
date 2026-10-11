@@ -49,7 +49,7 @@ def render_login():
                 identifier = st.text_input("Mitarbeiternummer oder Vorname.Nachname", placeholder="z. B. 1000")
                 password = st.text_input("Passwort / PIN", type="password")
                 
-                submitted = st.form_submit_button("Anmelden", type="primary", width="stretch")
+                submitted = st.form_submit_button("Anmelden", type="primary", use_container_width=True)
 
                 if submitted:
                     if not identifier or not password:
@@ -110,7 +110,7 @@ def render_login():
                 new_pw = st.text_input("Neues Passwort vergeben *", type="password")
                 new_pw_confirm = st.text_input("Neues Passwort wiederholen *", type="password")
 
-                btn_reset = st.form_submit_button("Passwort jetzt zurücksetzen", type="primary", width="stretch")
+                btn_reset = st.form_submit_button("Passwort jetzt zurücksetzen", type="primary", use_container_width=True)
 
                 if btn_reset:
                     if not reset_ma_nr or not new_pw or not secret_check:
@@ -153,7 +153,7 @@ def render_login():
 # -----------------------------------------------------------------------------
 def render_mein_profil(supabase):
     st.title("👤 Mein Profil & Einstellungen")
-    st.caption("Hier sehen Sie Ihre aktuellen Stammdaten und können diese anpassen.")
+    st.caption("Hier können Sie Ihre persönlichen Stammdaten einsehen und anpassen.")
 
     user = st.session_state.get("user_data")
     user_id = user["id"]
@@ -165,21 +165,35 @@ def render_mein_profil(supabase):
     except Exception:
         current_data = {}
 
-    # Oben: Klare Ansicht der aktuellen Daten (Read-only Info)
-    st.markdown("### 📋 Aktuelle Stammdaten")
-    col_v1, col_v2, col_v3 = st.columns(3)
-    col_v1.metric("Mitarbeiternummer", current_data.get("mitarbeiternummer", "-"))
-    col_v2.metric("Zugewiesene Rolle", current_data.get("rollen", {}).get("bezeichnung", "-") if current_data.get("rollen") else "-")
-    col_v3.metric("Status", "🟢 Aktiv" if current_data.get("ist_aktiv") else "🔴 Inaktiv")
+    # --- ANSICHT: Aktuelle Stammdaten (Read-Only Übersicht) ---
+    st.markdown("### 📋 Ihre aktuellen Stammdaten")
+    
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Mitarbeiternummer", current_data.get("mitarbeiternummer", "-"))
+    col_b.metric("Rolle im Betrieb", current_data.get("rollen", {}).get("bezeichnung", "-") if current_data.get("rollen") else "-")
+    col_c.metric("Account-Status", "🟢 Aktiv" if current_data.get("ist_aktiv") else "🔴 Inaktiv")
+
+    st.info("💡 **Hinweis:** Ihre Mitarbeiternummer und Ihre betriebliche Rolle können aus Sicherheitsgründen nur von Administratoren geändert werden.")
 
     st.markdown("---")
 
-    tab_daten, tab_passwort = st.tabs(["📝 Kontaktdaten anpassen", "🔒 Passwort / PIN ändern"])
+    tab_ansicht, tab_daten, tab_passwort = st.tabs(["👁️ Daten anzeigen", "📝 Daten bearbeiten", "🔒 Passwort / PIN ändern"])
 
-    # --- TAB 1: Kontaktdaten bearbeiten ---
+    # --- TAB 1: Reine Ansicht ---
+    with tab_ansicht:
+        st.markdown("#### Ihre hinterlegten Kontaktdaten")
+        st.write(f"**Vorname:** {current_data.get('vorname', '-')}")
+        st.write(f"**Nachname:** {current_data.get('nachname', '-')}")
+        st.write(f"**E-Mail-Adresse:** {current_data.get('email', '-')}")
+        st.write(f"**Telefonnummer:** {current_data.get('telefon', '-')}")
+        st.write(f"**Anschrift:** {current_data.get('adresse', '-')}")
+        st.write(f"**Geburtsdatum:** {current_data.get('geburtsdatum', '-')}")
+        st.write(f"**Tätig seit:** {current_data.get('taetig_seit', '-')}")
+
+    # --- TAB 2: Kontaktdaten bearbeiten ---
     with tab_daten:
         with st.form("profil_daten_form"):
-            st.markdown("#### Kontaktdaten aktualisieren")
+            st.markdown("#### Kontaktdaten anpassen")
             
             new_vorname = st.text_input("Vorname", value=current_data.get("vorname", ""))
             new_nachname = st.text_input("Nachname", value=current_data.get("nachname", ""))
@@ -187,7 +201,7 @@ def render_mein_profil(supabase):
             new_telefon = st.text_input("Telefonnummer", value=current_data.get("telefon", ""))
             new_adresse = st.text_area("Anschrift", value=current_data.get("adresse", ""))
 
-            submitted_daten = st.form_submit_button("Änderungen speichern", type="primary", width="stretch")
+            submitted_daten = st.form_submit_button("Änderungen speichern", type="primary", use_container_width=True)
 
             if submitted_daten:
                 try:
@@ -200,15 +214,15 @@ def render_mein_profil(supabase):
                     }
                     supabase.table("mitarbeiter").update(update_payload).eq("id", user_id).execute()
                     
-                    # Session State für den Vornamen/Namen in der Sidebar aktualisieren
+                    # Session State aktualisieren
                     st.session_state["user_data"]["name"] = f"{new_vorname} {new_nachname}".strip()
                     
-                    st.success("✅ Daten erfolgreich angepasst!")
+                    st.success("✅ Ihre Daten wurden erfolgreich angepasst!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Fehler beim Speichern der Daten: {e}")
 
-    # --- TAB 2: Passwort / PIN ändern ---
+    # --- TAB 3: Passwort / PIN ändern ---
     with tab_passwort:
         with st.form("profil_passwort_form"):
             st.markdown("#### Passwort / PIN ändern")
@@ -216,7 +230,7 @@ def render_mein_profil(supabase):
             neues_passwort = st.text_input("Neues Passwort / PIN", type="password")
             neues_passwort_wwh = st.text_input("Neues Passwort wiederholen", type="password")
 
-            submitted_pw = st.form_submit_button("Passwort jetzt ändern", type="primary", width="stretch")
+            submitted_pw = st.form_submit_button("Passwort jetzt ändern", type="primary", use_container_width=True)
 
             if submitted_pw:
                 if not alt_passwort or not neues_passwort or not neues_passwort_wwh:
@@ -258,7 +272,7 @@ def render_app():
         options=["🏠 Module & Hauptmenü", "👤 Mein Profil & Einstellungen"]
     )
 
-    if st.sidebar.button("🚪 Abmelden", width="stretch"):
+    if st.sidebar.button("🚪 Abmelden", use_container_width=True):
         st.session_state["authenticated"] = False
         st.session_state["user_data"] = None
         st.rerun()

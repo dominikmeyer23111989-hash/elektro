@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# Deutsches Datums- und Zeit-Format Hilfsfunktionen
+# Deutsches Datums- und Zeit-Format
 # -----------------------------------------------------------------------------
 def format_datum(val):
     if not val or val == "-" or str(val).strip() == "":
@@ -38,7 +38,7 @@ def format_zeit(val):
         return str(val)
 
 # -----------------------------------------------------------------------------
-# Bildkomprimierung (Pillow) für Supabase Storage
+# Bildkomprimierung (Pillow)
 # -----------------------------------------------------------------------------
 def compress_image(uploaded_file, max_width=1200, quality=75):
     if uploaded_file.type == "application/pdf":
@@ -81,14 +81,13 @@ try:
 except Exception as e:
     st.error(f"Fehler bei der Verbindung zu Supabase: {e}")
 
-# Session State sicher initialisieren
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "user_data" not in st.session_state:
     st.session_state["user_data"] = None
 
 # -----------------------------------------------------------------------------
-# 2. PDF-Generator für die Personalakte
+# 2. PDF-Generator
 # -----------------------------------------------------------------------------
 class PersonalaktePDF(FPDF):
     def header(self):
@@ -401,7 +400,7 @@ def render_mitarbeiter_verwaltung():
                 st.info("Für diesen Mitarbeiter wurden noch keine Qualifikationen erfasst.")
 
 # -----------------------------------------------------------------------------
-# 4. Login-System mit Self-Service Wiederherstellungs-Reiter
+# 4. Login-System mit Self-Service Wiederherstellung
 # -----------------------------------------------------------------------------
 def render_login():
     st.title("⚡ Elektro-Enterprise System")
@@ -455,4 +454,122 @@ def render_login():
                             else:
                                 st.error("Ungültiges Passwort.")
                         except Exception as e:
-                            st.
+                            st.error(f"Login-Fehler: {e}")
+
+        # --- TAB 2: Autonomes Passwort-Zurücksetzen ---
+        with tab_reset:
+            st.markdown("##### Self-Service Wiederherstellung")
+            st.caption("Setzen Sie Ihr Passwort direkt über Ihre Notfall-PIN oder Ihren Recovery-Code zurück.")
+
+            with st.form("reset_form"):
+                reset_ma_nr = st.text_input("Mitarbeiternummer *", placeholder="z. B. 1000")
+                method = st.radio("Verifizierungsmethode", ["Notfall-PIN & Geburtsdatum", "Master-Recovery-Code"])
+                
+                if method == "Notfall-PIN & Geburtsdatum":
+                    geburtsdatum = st.date_input("Geburtsdatum zur Verifizierung", value=date(1990, 1, 1), format="DD.MM.YYYY")
+                    notfall_pin = st.text_input("Ihre 4-stellige Notfall-PIN", type="password")
+                    secret_check = str(notfall_pin)
+                else:
+                    recovery_code = st.text_input("Master-Recovery-Code", placeholder="z. B. REC-1000-88")
+                    secret_check = str(recovery_code)
+
+                st.markdown("---")
+                new_pw = st.text_input("Neues Passwort vergeben *", type="password")
+                new_pw_confirm = st.text_input("Neues Passwort wiederholen *", type="password")
+
+                btn_reset = st.form_submit_button("Passwort jetzt zurücksetzen", type="primary", use_container_width=True)
+
+                if btn_reset:
+                    if not reset_ma_nr or not new_pw or not secret_check:
+                        st.warning("Bitte füllen Sie alle erforderlichen Felder aus.")
+                    elif new_pw != new_pw_confirm:
+                        st.error("Die eingegebenen Passwörter stimmen nicht überein.")
+                    elif len(new_pw) < 4:
+                        st.error("Das neue Passwort muss mindestens 4 Zeichen lang sein.")
+                    else:
+                        try:
+                            res = supabase.table("mitarbeiter").select("*").eq("mitarbeiternummer", reset_ma_nr).eq("ist_aktiv", True).execute()
+                            if not res.data:
+                                st.error("Mitarbeiternummer ungültig.")
+                                return
+                            
+                            ma_rec = res.data[0]
+                            verified = False
+
+                            if method == "Notfall-PIN & Geburtsdatum":
+                                ma_geb = str(ma_rec.get("geburtsdatum", ""))
+                                ma_pin = str(ma_rec.get("notfall_pin", ""))
+                                if ma_geb == str(geburtsdatum) and ma_pin == notfall_pin and notfall_pin != "":
+                                    verified = True
+                            else:
+                                ma_code = str(ma_rec.get("recovery_code", ""))
+                                if ma_code == recovery_code and recovery_code != "":
+                                    verified = True
+
+                            if verified:
+                                supabase.table("mitarbeiter").update({"pin_hash": new_pw}).eq("id", ma_rec["id"]).execute()
+                                st.success("Ihr Passwort wurde erfolgreich geändert! Sie können sich jetzt anmelden.")
+                            else:
+                                st.error("Verifizierung fehlgeschlagen: Sicherheitsdaten falsch.")
+
+                        except Exception as e:
+                            st.error(f"Fehler beim Zurücksetzen: {e}")
+
+# -----------------------------------------------------------------------------
+# 5. Hauptanwendung
+# -----------------------------------------------------------------------------
+def render_app():
+    user = st.session_state.get("user_data")
+    if not user:
+        st.session_state["authenticated"] = False
+        st.rerun()
+        return
+    
+    st.sidebar.title("⚡ Elektro-Portal")
+    st.sidebar.write(f"Angemeldet: **{user.get('name', 'Unbekannt')}**")
+    st.sidebar.caption(f"Nr: {user.get('mitarbeiternummer', '-')} | Rolle: {user.get('rolle', '-')}")
+    
+    if st.sidebar.button("🚪 Abmelden", use_container_width=True):
+        st.session_state["authenticated"] = False
+        st.session_state["user_data"] = None
+        st.rerun()
+
+    st.sidebar.markdown("---")
+
+    menu_structure = {
+        "1": {"title": "👨‍💼 1. Mitarbeiterverwaltung", "sub": ["Verwaltung"]},
+        "2": {"title": "📦 2. Lagerverwaltung", "sub": ["Materialbestand"]},
+        "3": {"title": "⏱️ 3. Zeiterfassung", "sub": ["Stundenzettel"]},
+        "4": {"title": "📋 4. Aufträge", "sub": ["Auftragsübersicht"]},
+        "5": {"title": "👥 5. Kunden", "sub": ["Kundenstamm"]},
+        "6": {"title": "🚛 6. Fahrzeuge", "sub": ["Fuhrparkliste"]},
+        "7": {"title": "🏢 7. Gebäude", "sub": ["Anlagenregister"]},
+        "8": {"title": "📁 8. Dokumente", "sub": ["Schaltpläne"]},
+        "9": {"title": "💶 9. Finanzen / Monitor", "sub": ["Rechnungen"]}
+    }
+
+    allowed_menu_keys = user.get("rechte", [])
+    available_menus = {k: v for k, v in menu_structure.items() if k in allowed_menu_keys}
+
+    if not available_menus:
+        st.warning("Keine zugewiesenen Menürechte gefunden.")
+        return
+
+    selected_main = st.sidebar.selectbox(
+        "Hauptmenü",
+        options=list(available_menus.keys()),
+        format_func=lambda x: available_menus[x]["title"]
+    )
+
+    if selected_main:
+        if selected_main == "1":
+            render_mitarbeiter_verwaltung()
+        else:
+            st.title(available_menus[selected_main]["title"])
+            st.info("Dieses Modul wird als Nächstes ausgebaut.")
+
+# Control Flow
+if not st.session_state.get("authenticated", False):
+    render_login()
+else:
+    render_app()

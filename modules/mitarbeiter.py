@@ -115,7 +115,6 @@ def render_mitarbeiter_verwaltung(supabase):
     user = st.session_state.get("user_data", {})
     user_id = user.get("id")
 
-    # Dynamische Rechteprüfung für Anträge direkt aus der zugewiesenen Rolle des Users
     try:
         user_db_res = supabase.table("mitarbeiter").select("rollen(darf_antraege_pruefen)").eq("id", user_id).execute()
         r_info = user_db_res.data[0].get("rollen") if user_db_res.data else {}
@@ -184,7 +183,7 @@ def render_mitarbeiter_verwaltung(supabase):
                             st.success("Stammdaten erfolgreich aktualisiert!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Fehler: {e} (Hinweis: Falls die Spalte 'standard_pause_minuten' in Supabase fehlt, einmalig im SQL-Editor ausführen: ALTER TABLE mitarbeiter ADD COLUMN IF NOT EXISTS standard_pause_minuten INTEGER DEFAULT 30;)")
+                            st.error(f"Fehler: {e}")
 
                 st.markdown("---")
                 q_res = supabase.table("qualifikationen").select("*").eq("mitarbeiter_id", selected_ma_id).execute()
@@ -257,7 +256,7 @@ def render_mitarbeiter_verwaltung(supabase):
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
-    # --- TAB 3: Rollen & Rechte (Inklusive Rollen-Löschen-Funktion) ---
+    # --- TAB 3: Rollen & Rechte ---
     with tab_rollen:
         st.subheader("🔑 Rollen, Rechte & Genehmigungen")
         try:
@@ -383,4 +382,110 @@ def render_mitarbeiter_verwaltung(supabase):
 
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("Urlaubsanspruch gesamt", f"{gesamt_urlaub} Tage")
-        col_m2.metric("Bere
+        col_m2.metric("Bereits beantragt / genommen", f"{berechnete_tage} Tage")
+        col_m3.metric("Verbleibende Urlaubstage", f"{rest_urlaub} Tage", delta=f"{rest_urlaub} übrig")
+
+        st.markdown("---")
+
+        sub_tab_neu, sub_tab_meine, sub_tab_admin = st.tabs([
+            "➕ Neuen Antrag stellen", 
+            "📄 Meine Anträge", 
+            f"⚙️ Anträge prüfen ({anzahl_offen} offen)" if is_antrag_admin else "🔒 Admin-Ansicht (Gesperrt)"
+        ])
+
+        with sub_tab_neu:
+            with st.form("neuer_antrag_form"):
+                art = st.selectbox("Art des Antrags", ["Urlaub", "Sonderurlaub", "Krankheitstag (Nachmeldung)", "Fortbildung", "Sonstiges"])
+                col_d1, col_d2 = st.columns(2)
+                start_datum = col_d1.date_input("Von Datum", value=date.today(), format="DD.MM.YYYY")
+                end_datum = col_d2.date_input("Bis Datum", value=date.today(), format="DD.MM.YYYY")
+                grund = st.text_area("Grund / Bemerkung (optional)")
+                
+                if st.form_submit_button("Antrag abschicken", type="primary", use_container_width=True):
+                    if start_datum > end_datum:
+                        st.error("Das Startdatum kann nicht nach dem Enddatum liegen.")
+                    else:
+                        try:
+                            supabase.table("antraege").insert({
+                                "mitarbeiter_id": user_id,
+                                "art": art,
+                                "start_datum": str(start_datum),
+                                "end_datum": str(end_datum),
+                                "details": grund,
+                                "status": "in_bearbeitung"
+                            }).execute()
+                            st.success("Antrag erfolgreich eingereicht! Zuständige Vorgesetzte wurden benachrichtigt (Status: 🟡 In Bearbeitung).")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler: {e}")
+
+        with sub_tab_meine:
+            if user_antraege:
+                for a in user_antraege:
+                    status = a.get("status")
+                    badge = "🟢 Genehmigt" if status == "genehmigt" else ("🔴 Abgelehnt" if status == "abgelehnt" else "🟡 In Bearbeitung")
+                    with st.expander(f"{badge} | {a.get('art')} vom {a.get('start_datum')} bis {a.get('end_datum')}"):
+                        st.write(f"**Details:** {a.get('details', '-')}")
+                        if status == "abgelehnt" and a.get("ablehnungsgrund"):
+                            st.error(f"**Ablehnungsgrund:** {a.get('ablehnungsgrund')}")
+            else:
+                st.info("Keine Anträge vorhanden.")
+
+        with sub_tab_admin:
+            if is_antrag_admin:
+                if all_antraege:
+                    for a in all_antraege:
+                        ma = a.get("mitarbeiter") or {}
+                        ma_name = f"{ma.get('vorname', '')} {ma.get('nachname', '')} (Nr: {ma.get('mitarbeiternummer', '-')})"
+                        status = a.get("status")
+                        badge = "🟢 Genehmigt" if status == "genehmigt" else ("🔴 Abgelehnt" if status == "abgelehnt" else "🟡 In Bearbeitung")
+
+                        with st.expander(f"{badge} | {ma_name} - {a.get('art')} ({a.get('start_datum')} bis {a.get('end_datum')})"):
+                            st.write(f"**Grund:** {a.get('details', '-')}")
+                            with st.form(f"admin_antrag_{a['id']}"):
+                                neu_status = st.selectbox("Status", ["in_bearbeitung", "genehmigt", "abgelehnt"], index=["in_bearbeitung", "genehmigt", "abgelehnt"].index(status))
+                                ablehnung_grund = st.text_input("Ablehnungsgrund (bei Rot erforderlich)", value=a.get("ablehnungsgrund", ""))
+                                if st.form_submit_button("Status speichern", type="primary"):
+                                    supabase.table("antraege").update({
+                                        "status": neu_status,
+                                        "ablehnungsgrund": ablehnung_grund if neu_status == "abgelehnt" else ""
+                                    }).eq("id", a["id"]).execute()
+                                    st.success("Antrag aktualisiert!")
+                                    st.rerun()
+                else:
+                    st.info("Keine Anträge im System.")
+
+    # --- TAB 5: Qualifikationen ---
+    with tab_qualifikationen:
+        st.subheader("Qualifikationen & Scheine")
+        try:
+            ma_list = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer").execute().data or []
+        except Exception:
+            ma_list = []
+
+        if ma_list:
+            sel_ma = st.selectbox("Mitarbeiter wählen", [m["id"] for m in ma_list], format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in ma_list if m["id"] == x), key="q_ma_sel")
+            with st.form("quali_form"):
+                kat = st.selectbox("Kategorie", ["Ausbildung", "Weiterbildung", "Zertifikat", "Sonstiges"])
+                titel = st.text_input("Titel *")
+                d_erh = st.date_input("Erhalten am", value=date.today())
+                d_bis = st.date_input("Gültig bis", value=None)
+                desc = st.text_area("Anmerkung")
+                up_file = st.file_uploader("Nachweis (Bild/PDF)", type=["png", "jpg", "jpeg", "pdf"])
+                
+                if st.form_submit_button("Speichern", type="primary", use_container_width=True):
+                    if titel:
+                        f_url = None
+                        if up_file:
+                            fb, ct, fn = compress_image(up_file)
+                            fp = f"{sel_ma}/{fn}"
+                            supabase.storage.from_("mitarbeiter-dokumente").upload(fp, fb, {"content-type": ct, "upsert": "true"})
+                            f_url = supabase.storage.from_("mitarbeiter-dokumente").get_public_url(fp)
+                        
+                        supabase.table("qualifikationen").insert({
+                            "mitarbeiter_id": sel_ma, "kategorie": kat, "titel": titel,
+                            "datum_erhalten": str(d_erh), "gueltig_bis": str(d_bis) if d_bis else None,
+                            "beschreibung": desc, "dokument_url": f_url
+                        }).execute()
+                        st.success("Gespeichert!")
+                        st.rerun()

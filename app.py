@@ -78,6 +78,11 @@ def render_login():
                                     "id": user_rec["id"],
                                     "mitarbeiternummer": user_rec.get("mitarbeiternummer", "-"),
                                     "name": f"{user_rec.get('vorname', '')} {user_rec.get('nachname', '')}".strip(),
+                                    "vorname": user_rec.get('vorname', ''),
+                                    "nachname": user_rec.get('nachname', ''),
+                                    "email": user_rec.get('email', ''),
+                                    "telefon": user_rec.get('telefon', ''),
+                                    "adresse": user_rec.get('adresse', ''),
                                     "rolle": f_rolle,
                                     "ebene": f_ebene,
                                     "rechte": f_rechte
@@ -149,7 +154,86 @@ def render_login():
                             st.error(f"Fehler beim Zurücksetzen: {e}")
 
 # -----------------------------------------------------------------------------
-# 3. Hauptanwendung & Routing
+# 3. Eigene Daten bearbeiten (Self-Service Profil)
+# -----------------------------------------------------------------------------
+def render_mein_profil(supabase):
+    st.title("👤 Mein Profil & Einstellungen")
+    st.caption("Hier können Sie Ihre persönlichen Kontaktdaten sowie Ihr Passwort bzw. Ihre PIN selbst verwalten.")
+
+    user = st.session_state.get("user_data")
+    user_id = user["id"]
+
+    # Aktuelle Daten frisch aus der Datenbank laden
+    try:
+        res = supabase.table("mitarbeiter").select("*").eq("id", user_id).execute()
+        current_data = res.data[0] if res.data else user
+    except Exception:
+        current_data = user
+
+    tab_daten, tab_passwort = st.tabs(["📝 Kontaktdaten bearbeiten", "🔒 Passwort / PIN ändern"])
+
+    # --- TAB 1: Kontaktdaten (Ohne Mitarbeiternummer / Rolle) ---
+    with tab_daten:
+        with st.form("profil_daten_form"):
+            st.info(f"🔒 **Mitarbeiternummer:** `{current_data.get('mitarbeiternummer')}` (Kann nicht geändert werden)")
+            st.info(f"🔑 **Zugewiesene Rolle:** `{user.get('rolle')}` (Wird durch die Geschäftsleitung/Admin verwaltet)")
+            
+            st.markdown("---")
+            new_vorname = st.text_input("Vorname", value=current_data.get("vorname", ""))
+            new_nachname = st.text_input("Nachname", value=current_data.get("nachname", ""))
+            new_email = st.text_input("E-Mail-Adresse", value=current_data.get("email", ""))
+            new_telefon = st.text_input("Telefonnummer", value=current_data.get("telefon", ""))
+            new_adresse = st.text_area("Anschrift", value=current_data.get("adresse", ""))
+
+            submitted_daten = st.form_submit_button("Änderungen speichern", type="primary", width="stretch")
+
+            if submitted_daten:
+                try:
+                    update_payload = {
+                        "vorname": new_vorname,
+                        "nachname": new_nachname,
+                        "email": new_email,
+                        "telefon": new_telefon,
+                        "adresse": new_adresse
+                    }
+                    supabase.table("mitarbeiter").update(update_payload).eq("id", user_id).execute()
+                    
+                    # Session State aktualisieren
+                    st.session_state["user_data"]["name"] = f"{new_vorname} {new_nachname}".strip()
+                    st.success("Ihre Kontaktdaten wurden erfolgreich aktualisiert!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Fehler beim Speichern der Daten: {e}")
+
+    # --- TAB 2: Passwort / PIN ändern ---
+    with tab_passwort:
+        with st.form("profil_passwort_form"):
+            st.markdown("#### Passwort / PIN ändern")
+            alt_passwort = st.text_input("Aktuelles Passwort / PIN", type="password")
+            neues_passwort = st.text_input("Neues Passwort / PIN", type="password")
+            neues_passwort_wwh = st.text_input("Neues Passwort wiederholen", type="password")
+
+            submitted_pw = st.form_submit_button("Passwort jetzt ändern", type="primary", width="stretch")
+
+            if submitted_pw:
+                if not alt_passwort or not neues_passwort or not neues_passwort_wwh:
+                    st.warning("Bitte füllen Sie alle Passwort-Felder aus.")
+                elif neues_passwort != neues_passwort_wwh:
+                    st.error("Die neuen Passwörter stimmen nicht überein.")
+                elif len(neues_passwort) < 4:
+                    st.error("Das neue Passwort muss mindestens 4 Zeichen lang sein.")
+                else:
+                    if str(current_data.get("pin_hash")) == str(alt_passwort):
+                        try:
+                            supabase.table("mitarbeiter").update({"pin_hash": neues_passwort}).eq("id", user_id).execute()
+                            st.success("Ihr Passwort wurde erfolgreich geändert!")
+                        except Exception as e:
+                            st.error(f"Fehler beim Ändern des Passworts: {e}")
+                    else:
+                        st.error("Das eingegebene aktuelle Passwort ist falsch.")
+
+# -----------------------------------------------------------------------------
+# 4. Hauptanwendung & Routing
 # -----------------------------------------------------------------------------
 def render_app():
     user = st.session_state.get("user_data")
@@ -158,7 +242,6 @@ def render_app():
         st.rerun()
         return
     
-    # Vorname extrahieren für persönliche Begrüßung
     full_name = user.get("name", "Mitarbeiter")
     vorname = full_name.split()[0] if full_name else "Mitarbeiter"
 
@@ -167,6 +250,12 @@ def render_app():
     st.sidebar.write(f"**{full_name}**")
     st.sidebar.caption(f"Nr: {user.get('mitarbeiternummer', '-')} | Rolle: {user.get('rolle', '-')}")
     
+    # Eigener Menüpunkt für das Profil in der Sidebar
+    menu_selection = st.sidebar.radio(
+        "Navigation",
+        options=["🏠 Module & Hauptmenü", "👤 Mein Profil & Einstellungen"]
+    )
+
     if st.sidebar.button("🚪 Abmelden", width="stretch"):
         st.session_state["authenticated"] = False
         st.session_state["user_data"] = None
@@ -174,27 +263,30 @@ def render_app():
 
     st.sidebar.markdown("---")
 
-    # Menürechte auswerten
-    allowed_menu_keys = user.get("rechte", [])
-    available_menus = {k: v for k, v in ALL_MODULES.items() if k in allowed_menu_keys}
+    if menu_selection == "👤 Mein Profil & Einstellungen":
+        render_mein_profil(supabase)
+    else:
+        # Menürechte auswerten
+        allowed_menu_keys = user.get("rechte", [])
+        available_menus = {k: v for k, v in ALL_MODULES.items() if k in allowed_menu_keys}
 
-    if not available_menus:
-        st.warning("Keine zugewiesenen Menürechte gefunden.")
-        return
+        if not available_menus:
+            st.warning("Keine zugewiesenen Menürechte gefunden.")
+            return
 
-    selected_main = st.sidebar.selectbox(
-        "Hauptmenü",
-        options=list(available_menus.keys()),
-        format_func=lambda x: available_menus[x]
-    )
+        selected_main = st.sidebar.selectbox(
+            "Hauptmenü",
+            options=list(available_menus.keys()),
+            format_func=lambda x: available_menus[x]
+        )
 
-    # --- ROUTING DER MODULE ---
-    if selected_main:
-        if selected_main == "1":
-            render_mitarbeiter_verwaltung(supabase)
-        else:
-            st.title(available_menus[selected_main])
-            st.info("Dieses Modul wird als Nächstes ausgebaut.")
+        # --- ROUTING DER MODULE ---
+        if selected_main:
+            if selected_main == "1":
+                render_mitarbeiter_verwaltung(supabase)
+            else:
+                st.title(available_menus[selected_main])
+                st.info("Dieses Modul wird als Nächstes ausgebaut.")
 
 # -----------------------------------------------------------------------------
 # Kontrollfluss

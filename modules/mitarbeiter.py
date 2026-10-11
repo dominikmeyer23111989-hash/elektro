@@ -9,7 +9,7 @@ ALL_MODULES = {
     "1": "1. Mitarbeiterverwaltung",
     "2": "2. Lagerverwaltung",
     "3": "3. Zeiterfassung",
-    "4": "4. Aufträge",
+    "4": "4. Anträge & Urlaub",
     "5": "5. Kunden",
     "6": "6. Fahrzeuge",
     "7": "7. Gebäude",
@@ -17,9 +17,6 @@ ALL_MODULES = {
     "9": "9. Finanzen / Monitor"
 }
 
-# -----------------------------------------------------------------------------
-# Bildkomprimierung für Dokumente & Fotos
-# -----------------------------------------------------------------------------
 def compress_image(uploaded_file, max_width=1200, quality=75):
     if uploaded_file.type == "application/pdf":
         return uploaded_file.getvalue(), "application/pdf", uploaded_file.name
@@ -43,9 +40,6 @@ def compress_image(uploaded_file, max_width=1200, quality=75):
     except Exception:
         return uploaded_file.getvalue(), uploaded_file.type, uploaded_file.name
 
-# -----------------------------------------------------------------------------
-# PDF-Generator für die digitale Personalakte
-# -----------------------------------------------------------------------------
 class PersonalaktePDF(FPDF):
     def header(self):
         self.set_font('Helvetica', 'B', 16)
@@ -75,11 +69,12 @@ def generate_mitarbeiter_pdf(mitarbeiter_data, qualifikationen):
     fields = [
         ("Mitarbeiternummer:", str(mitarbeiter_data.get('mitarbeiternummer', '-'))),
         ("Rolle im Betrieb:", rolle_txt),
+        ("Urlaubstage / Jahr:", str(mitarbeiter_data.get('urlaubstage_gesamt', 30))),
+        ("Wochenstunden:", f"{mitarbeiter_data.get('wochenstunden', 40.0)} Std."),
         ("Geburtsdatum:", str(mitarbeiter_data.get('geburtsdatum', '-'))),
         ("Tätig seit:", str(mitarbeiter_data.get('taetig_seit', '-'))),
         ("E-Mail:", str(mitarbeiter_data.get('email', '-'))),
         ("Telefon:", str(mitarbeiter_data.get('telefon', '-'))),
-        ("Adresse:", str(mitarbeiter_data.get('adresse', '-'))),
         ("Status:", "Aktiv" if mitarbeiter_data.get('ist_aktiv') else "Inaktiv")
     ]
     
@@ -113,24 +108,19 @@ def generate_mitarbeiter_pdf(mitarbeiter_data, qualifikationen):
         
     return pdf.output()
 
-# -----------------------------------------------------------------------------
-# Haupt-Rendering-Funktion für Modul 1
-# -----------------------------------------------------------------------------
 def render_mitarbeiter_verwaltung(supabase):
     st.title("👨‍💼 1. Mitarbeiterverwaltung")
     
     tab_uebersicht, tab_neu, tab_rollen, tab_qualifikationen = st.tabs([
-        "📋 Mitarbeiterübersicht & Bearbeiten", 
+        "📋 Personalstamm & Status", 
         "➕ Neuer Mitarbeiter", 
         "🔑 Rollen & Rechte", 
-        "📜 Qualifikationen & Scheine"
+        "📜 Qualifikationen"
     ])
     
-    # -------------------------------------------------------------------------
-    # TAB 1: Mitarbeiterübersicht, Status ändern & PDF-Export
-    # -------------------------------------------------------------------------
+    # --- TAB 1: Übersicht & Bearbeiten ---
     with tab_uebersicht:
-        st.subheader("Personalstamm & Statusverwaltung")
+        st.subheader("Personalstamm, Arbeitszeiten & Urlaubsanspruch")
         try:
             res = supabase.table("mitarbeiter").select("*, rollen(*)").execute()
             mitarbeiter_liste = res.data or []
@@ -140,65 +130,61 @@ def render_mitarbeiter_verwaltung(supabase):
                     "Nr": m.get("mitarbeiternummer"),
                     "Name": f"{m.get('vorname')} {m.get('nachname')}",
                     "Rolle": m.get("rollen", {}).get("bezeichnung", "-") if m.get("rollen") else "-",
-                    "Tätig seit": m.get("taetig_seit", "-"),
-                    "Telefon": m.get("telefon", "-"),
+                    "Urlaub/Jahr": m.get("urlaubstage_gesamt", 30),
+                    "Std/Woche": m.get("wochenstunden", 40.0),
                     "Status": "🟢 Aktiv" if m.get("ist_aktiv") else "🔴 Inaktiv"
                 } for m in mitarbeiter_liste])
                 
                 st.dataframe(display_df, use_container_width=True)
                 
                 st.markdown("---")
-                st.subheader("⚙️ Mitarbeiter-Status & Stammdaten bearbeiten")
+                st.subheader("⚙️ Mitarbeiter-Details, Kontingente & Status bearbeiten")
                 
                 selected_ma_id = st.selectbox(
-                    "Mitarbeiter für Bearbeitung / Statuswechsel auswählen", 
+                    "Mitarbeiter auswählen", 
                     options=[m["id"] for m in mitarbeiter_liste],
                     format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in mitarbeiter_liste if m["id"] == x)
                 )
                 
                 selected_ma = next(m for m in mitarbeiter_liste if m["id"] == selected_ma_id)
 
-                with st.form("status_update_form"):
-                    st.write(f"Bearbeite: **{selected_ma['vorname']} {selected_ma['nachname']}** (Nr: {selected_ma.get('mitarbeiternummer')})")
+                with st.form("ma_edit_form"):
+                    st.write(f"Bearbeite: **{selected_ma['vorname']} {selected_ma['nachname']}**")
                     
-                    # Der Aktiv/Inaktiv Schalter
-                    neuer_status = st.checkbox("Account ist aktiv (Häkchen = Login erlaubt, Ohne = Gesperrt/Inaktiv)", value=selected_ma.get("ist_aktiv", True))
+                    col_e1, col_e2 = st.columns(2)
+                    with col_e1:
+                        neuer_urlaub = st.number_input("Urlaubstage pro Jahr", min_value=0, max_value=60, value=int(selected_ma.get("urlaubstage_gesamt") or 30))
+                        neue_wochenstunden = st.number_input("Wochenstunden (für Zeiterfassung)", min_value=0.0, max_value=60.0, value=float(selected_ma.get("wochenstunden") or 40.0), step=0.5)
+                    with col_e2:
+                        neuer_status = st.checkbox("Account ist aktiv (Login erlaubt)", value=selected_ma.get("ist_aktiv", True))
                     
-                    update_submit = st.form_submit_button("Status speichern", type="primary", use_container_width=True)
-                    if update_submit:
+                    if st.form_submit_button("Stammdaten aktualisieren", type="primary", use_container_width=True):
                         try:
-                            supabase.table("mitarbeiter").update({"ist_aktiv": neuer_status}).eq("id", selected_ma_id).execute()
-                            st.success(f"Status für {selected_ma['vorname']} {selected_ma['nachname']} erfolgreich aktualisiert!")
+                            supabase.table("mitarbeiter").update({
+                                "urlaubstage_gesamt": neuer_urlaub,
+                                "wochenstunden": neue_wochenstunden,
+                                "ist_aktiv": neuer_status
+                            }).eq("id", selected_ma_id).execute()
+                            st.success("Stammdaten erfolgreich aktualisiert!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Fehler beim Aktualisieren des Status: {e}")
+                            st.error(f"Fehler: {e}")
 
                 st.markdown("---")
-                st.subheader("📄 Personalakte als PDF exportieren")
-                
                 q_res = supabase.table("qualifikationen").select("*").eq("mitarbeiter_id", selected_ma_id).execute()
-                qualis = q_res.data or []
-                
-                pdf_bytes = generate_mitarbeiter_pdf(selected_ma, qualis)
-                
+                pdf_bytes = generate_mitarbeiter_pdf(selected_ma, q_res.data or [])
                 st.download_button(
                     label=f"📥 Personalakte von {selected_ma['vorname']} {selected_ma['nachname']} herunterladen (PDF)",
                     data=bytes(pdf_bytes),
                     file_name=f"Personalakte_{selected_ma['mitarbeiternummer']}_{selected_ma['nachname']}.pdf",
-                    mime="application/pdf",
-                    type="primary"
+                    mime="application/pdf"
                 )
-            else:
-                st.info("Noch keine Mitarbeiter erfasst.")
         except Exception as e:
-            st.error(f"Fehler beim Laden der Mitarbeiter: {e}")
+            st.error(f"Fehler: {e}")
 
-    # -------------------------------------------------------------------------
-    # TAB 2: Neuer Mitarbeiter anlegen (Inklusive Aktiv-Status)
-    # -------------------------------------------------------------------------
+    # --- TAB 2: Neuer Mitarbeiter ---
     with tab_neu:
         st.subheader("Neuen Mitarbeiter im System anlegen")
-        
         try:
             rollen_res = supabase.table("rollen").select("*").execute()
             rollen_dict = {r["bezeichnung"]: r["id"] for r in rollen_res.data} if rollen_res.data else {}
@@ -207,31 +193,26 @@ def render_mitarbeiter_verwaltung(supabase):
         
         with st.form("neuer_mitarbeiter_form"):
             col1, col2 = st.columns(2)
-            
             with col1:
                 mitarbeiternr = st.text_input("Mitarbeiternummer *", placeholder="z. B. 1005")
                 vorname = st.text_input("Vorname *")
                 nachname = st.text_input("Nachname *")
                 geburtsdatum = st.date_input("Geburtsdatum", value=date(1990, 1, 1), format="DD.MM.YYYY")
                 taetig_seit = st.date_input("Im Unternehmen tätig seit", value=date.today(), format="DD.MM.YYYY")
-                
+                urlaubstage = st.number_input("Urlaubstage pro Jahr", value=30, min_value=0, max_value=60)
+                wochenstunden = st.number_input("Wochenstunden", value=40.0, min_value=0.0, max_value=60.0, step=0.5)
             with col2:
-                rolle_bezeichnung = st.selectbox(
-                    "Rolle / Funktion im Unternehmen *", 
-                    list(rollen_dict.keys()) if rollen_dict else ["Keine Rolle vorhanden"]
-                )
-                passwort = st.text_input("Erst-Passwort / PIN *", type="password", help="Wird dem Mitarbeiter mitgeteilt.")
-                notfall_pin = st.text_input("4-stellige Notfall-PIN", type="password", max_chars=4, placeholder="z. B. 4321")
+                rolle_bezeichnung = st.selectbox("Rolle / Funktion *", list(rollen_dict.keys()) if rollen_dict else ["Keine Rolle"])
+                passwort = st.text_input("Erst-Passwort / PIN *", type="password")
+                notfall_pin = st.text_input("4-stellige Notfall-PIN", type="password", max_chars=4)
                 ist_aktiv_neu = st.checkbox("Account sofort aktivieren", value=True)
-                email = st.text_input("E-Mail-Adresse (optional)")
-                telefon = st.text_input("Telefonnummer (optional)")
+                email = st.text_input("E-Mail (optional)")
+                telefon = st.text_input("Telefon (optional)")
                 adresse = st.text_area("Anschrift (optional)")
                 
-            submitted = st.form_submit_button("Mitarbeiter anlegen", type="primary", use_container_width=True)
-            
-            if submitted:
-                if not mitarbeiternr or not vorname or not nachname or not passwort or not rollen_dict:
-                    st.warning("Bitte füllen Sie alle Pflichtfelder (*) aus und legen Sie vorher mindestens eine Rolle an.")
+            if st.form_submit_button("Mitarbeiter anlegen", type="primary", use_container_width=True):
+                if not mitarbeiternr or not vorname or not nachname or not passwort:
+                    st.warning("Bitte Pflichtfelder ausfüllen.")
                 else:
                     try:
                         rec_code = f"REC-{mitarbeiternr}-88"
@@ -241,6 +222,8 @@ def render_mitarbeiter_verwaltung(supabase):
                             "nachname": nachname,
                             "geburtsdatum": str(geburtsdatum),
                             "taetig_seit": str(taetig_seit),
+                            "urlaubstage_gesamt": urlaubstage,
+                            "wochenstunden": wochenstunden,
                             "rolle_id": rollen_dict.get(rolle_bezeichnung),
                             "pin_hash": passwort,
                             "notfall_pin": notfall_pin,
@@ -251,183 +234,79 @@ def render_mitarbeiter_verwaltung(supabase):
                             "ist_aktiv": ist_aktiv_neu
                         }
                         supabase.table("mitarbeiter").insert(data).execute()
-                        st.success(f"Mitarbeiter {vorname} {nachname} ({mitarbeiternr}) erfolgreich angelegt!")
-                        st.info(f"💡 Generierter Recovery-Code für Notfälle: `{rec_code}`")
+                        st.success(f"Mitarbeiter {vorname} {nachname} angelegt!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Fehler beim Anlegen: {e}")
+                        st.error(f"Fehler: {e}")
 
-    # -------------------------------------------------------------------------
-    # TAB 3: Vollständig freie Rollen- & Rechteverwaltung
-    # -------------------------------------------------------------------------
+    # --- TAB 3: Rollen ---
     with tab_rollen:
-        st.subheader("🔑 Dynamische Rollen- & Rechteverwaltung")
-        st.caption("Erstellen Sie neue Betriebrollen (z. B. Bauleiter, Azubi, Monteur) komplett frei und bestimmen Sie per Checkbox, welche Module diese sehen dürfen.")
-
-        with st.expander("➕ Neue Rolle im System erstellen", expanded=False):
-            with st.form("neue_rolle_form"):
-                n_bezeichnung = st.text_input("Rollenbezeichnung *", placeholder="z. B. Kundendienst-Techniker")
-                n_ebene = st.text_input("Bereich / Ebene (optional)", placeholder="z. B. baustelle oder buero")
-                
-                st.markdown("**Ersterlaubte Module für diese Rolle auswählen:**")
-                col_r1, col_r2 = st.columns(2)
-                initial_selected = []
-                for idx, (m_k, m_t) in enumerate(ALL_MODULES.items()):
-                    target_col = col_r1 if idx < 5 else col_r2
-                    if target_col.checkbox(m_t, value=(m_k in ["3", "8"]), key=f"new_role_mod_{m_k}"):
-                        initial_selected.append(m_k)
-
-                if st.form_submit_button("Neue Rolle speichern", type="primary"):
-                    if not n_bezeichnung:
-                        st.warning("Bitte geben Sie eine Rollenbezeichnung ein.")
-                    else:
-                        try:
-                            payload = {
-                                "bezeichnung": n_bezeichnung,
-                                "erlaubte_menues": initial_selected
-                            }
-                            if n_ebene.strip():
-                                payload["ebene"] = n_ebene.strip()
-                            
-                            supabase.table("rollen").insert(payload).execute()
-                            st.success(f"Rolle '{n_bezeichnung}' erfolgreich erstellt!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Fehler beim Speichern der Rolle: {e}")
-
-        st.markdown("---")
-
+        st.subheader("🔑 Rollen & Rechteverwaltung")
         try:
             rollen_data = supabase.table("rollen").select("*").execute().data or []
         except Exception:
             rollen_data = []
 
-        if not rollen_data:
-            st.info("Noch keine eigenen Rollen im System vorhanden. Erstellen Sie oben Ihre erste Rolle.")
-        else:
-            selected_rolle_name = st.selectbox(
-                "Rolle auswählen zum Bearbeiten oder Löschen", 
-                options=[r["bezeichnung"] for r in rollen_data]
-            )
-            
-            current_role_obj = next((r for r in rollen_data if r["bezeichnung"] == selected_rolle_name), None)
-            
-            if current_role_obj:
-                st.markdown(f"#### Rechte bearbeiten für: **{current_role_obj['bezeichnung']}**")
-                
-                current_allowed = current_role_obj.get("erlaubte_menues", [])
-                new_allowed = []
-                
-                col_a, col_b = st.columns(2)
-                for idx, (mod_key, mod_title) in enumerate(ALL_MODULES.items()):
-                    target_col = col_a if idx < 5 else col_b
-                    is_checked = target_col.checkbox(
-                        mod_title, 
-                        value=(mod_key in current_allowed), 
-                        key=f"perm_edit_{current_role_obj['id']}_{mod_key}"
-                    )
-                    if is_checked:
-                        new_allowed.append(mod_key)
-                        
-                c_save, c_del = st.columns([3, 1])
-                with c_save:
-                    if st.button("💾 Berechtigungen aktualisieren", type="primary", use_container_width=True):
-                        try:
-                            supabase.table("rollen").update({"erlaubte_menues": new_allowed}).eq("id", current_role_obj["id"]).execute()
-                            st.success(f"Rechte für Rolle '{selected_rolle_name}' aktualisiert!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Fehler beim Speichern: {e}")
-                
-                with c_del:
-                    if st.button("🗑️ Rolle löschen", use_container_width=True):
-                        try:
-                            supabase.table("rollen").delete().eq("id", current_role_obj["id"]).execute()
-                            st.success(f"Rolle '{selected_rolle_name}' gelöscht.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Fehler beim Löschen (wird evt. noch von Mitarbeitern verwendet): {e}")
-
-    # -------------------------------------------------------------------------
-    # TAB 4: Qualifikationen & Scheine eintragen
-    # -------------------------------------------------------------------------
-    with tab_qualifikationen:
-        st.subheader("Qualifikationen, Fortbildungen & Scheine")
-        
-        try:
-            ma_res = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer").execute()
-            ma_list = ma_res.data or []
-        except Exception:
-            ma_list = []
-        
-        if ma_list:
-            sel_ma_id = st.selectbox(
-                "Mitarbeiter wählen", 
-                options=[m["id"] for m in ma_list],
-                format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in ma_list if m["id"] == x),
-                key="qual_ma_select"
-            )
-            
-            st.markdown("---")
-            st.markdown("#### ➕ Neue Qualifikation / Schein erfassen")
-            
-            with st.form("qualifikation_form"):
-                kategorie = st.selectbox("Kategorie", ["Ausbildung", "Weiterbildung", "Zertifikat / Schein", "Sonstiges"])
-                titel = st.text_input("Bezeichnung / Titel *", placeholder="z. B. Ersthelfer, DGUV V3 Prüfschein")
-                
-                col_d1, col_d2 = st.columns(2)
-                datum_erhalten = col_d1.date_input("Erhalten am", value=date.today(), format="DD.MM.YYYY")
-                gueltig_bis = col_d2.date_input("Gültig bis (optional)", value=None, format="DD.MM.YYYY")
-                
-                beschreibung = st.text_area("Freitext / Anmerkung (optional)")
-                uploaded_file = st.file_uploader("Upload Nachweis-Foto oder PDF (optional)", type=["png", "jpg", "jpeg", "pdf"])
-                
-                submit_q = st.form_submit_button("Qualifikation speichern", type="primary", use_container_width=True)
-                
-                if submit_q:
-                    if not titel:
-                        st.warning("Bitte geben Sie einen Titel an.")
-                    else:
-                        file_url = None
-                        if uploaded_file is not None:
-                            try:
-                                file_bytes, content_type, file_name = compress_image(uploaded_file)
-                                file_path = f"{sel_ma_id}/{file_name}"
-                                supabase.storage.from_("mitarbeiter-dokumente").upload(
-                                    file_path, 
-                                    file_bytes, 
-                                    {"content-type": content_type, "upsert": "true"}
-                                )
-                                file_url = supabase.storage.from_("mitarbeiter-dokumente").get_public_url(file_path)
-                            except Exception as e_up:
-                                st.warning(f"Upload konnte nicht durchgeführt werden: {e_up}")
-
-                        q_data = {
-                            "mitarbeiter_id": sel_ma_id,
-                            "kategorie": kategorie,
-                            "titel": titel,
-                            "datum_erhalten": str(datum_erhalten) if datum_erhalten else None,
-                            "gueltig_bis": str(gueltig_bis) if gueltig_bis else None,
-                            "beschreibung": beschreibung,
-                            "dokument_url": file_url
-                        }
-                        supabase.table("qualifikationen").insert(q_data).execute()
-                        st.success("Qualifikation erfolgreich eingetragen!")
+        with st.expander("➕ Neue Rolle erstellen"):
+            with st.form("neue_rolle"):
+                r_bez = st.text_input("Rollenbezeichnung")
+                r_sel = []
+                col_r1, col_r2 = st.columns(2)
+                for idx, (m_k, m_t) in enumerate(ALL_MODULES.items()):
+                    if (col_r1 if idx < 5 else col_r2).checkbox(m_t, key=f"r_m_{m_k}"):
+                        r_sel.append(m_k)
+                if st.form_submit_button("Rolle speichern"):
+                    if r_bez:
+                        supabase.table("rollen").insert({"bezeichnung": r_bez, "erlaubte_menues": r_sel}).execute()
+                        st.success("Rolle gespeichert!")
                         st.rerun()
 
-            st.markdown("---")
-            st.markdown("#### 📜 Hinterlegte Qualifikationen")
-            try:
-                existing_q = supabase.table("qualifikationen").select("*").eq("mitarbeiter_id", sel_ma_id).execute().data or []
-            except Exception:
-                existing_q = []
+        if rollen_data:
+            sel_r = st.selectbox("Rolle bearbeiten", [r["bezeichnung"] for r in rollen_data])
+            r_obj = next((r for r in rollen_data if r["bezeichnung"] == sel_r), None)
+            if r_obj:
+                cur_m = r_obj.get("erlaubte_menues", [])
+                new_m = []
+                col_a, col_b = st.columns(2)
+                for idx, (m_k, m_t) in enumerate(ALL_MODULES.items()):
+                    if (col_a if idx < 5 else col_b).checkbox(m_t, value=(m_k in cur_m), key=f"edit_r_{r_obj['id']}_{m_k}"):
+                        new_m.append(m_k)
+                if st.button("Rechte aktualisieren", type="primary"):
+                    supabase.table("rollen").update({"erlaubte_menues": new_m}).eq("id", r_obj["id"]).execute()
+                    st.success("Aktualisiert!")
+                    st.rerun()
 
-            if existing_q:
-                for q in existing_q:
-                    with st.expander(f"{q['kategorie']}: {q['titel']} (Erhalten: {q.get('datum_erhalten', '-')})"):
-                        st.write(f"**Gültig bis:** {q.get('gueltig_bis', 'Unbefristet')}")
-                        st.write(f"**Beschreibung:** {q.get('beschreibung', '-')}")
-                        if q.get("dokument_url"):
-                            st.markdown(f"[📄 Nachweis-Dokument / Foto öffnen]({q['dokument_url']})")
-            else:
-                st.info("Für diesen Mitarbeiter wurden noch keine Qualifikationen erfasst.")
+    # --- TAB 4: Qualifikationen ---
+    with tab_qualifikationen:
+        st.subheader("Qualifikationen & Scheine")
+        try:
+            ma_list = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer").execute().data or []
+        except Exception:
+            ma_list = []
+
+        if ma_list:
+            sel_ma = st.selectbox("Mitarbeiter wählen", [m["id"] for m in ma_list], format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in ma_list if m["id"] == x))
+            with st.form("quali_form"):
+                kat = st.selectbox("Kategorie", ["Ausbildung", "Weiterbildung", "Zertifikat", "Sonstiges"])
+                titel = st.text_input("Titel *")
+                d_erh = st.date_input("Erhalten am", value=date.today())
+                d_bis = st.date_input("Gültig bis", value=None)
+                desc = st.text_area("Anmerkung")
+                up_file = st.file_uploader("Nachweis (Bild/PDF)", type=["png", "jpg", "jpeg", "pdf"])
+                
+                if st.form_submit_button("Speichern", type="primary"):
+                    if titel:
+                        f_url = None
+                        if up_file:
+                            fb, ct, fn = compress_image(up_file)
+                            fp = f"{sel_ma}/{fn}"
+                            supabase.storage.from_("mitarbeiter-dokumente").upload(fp, fb, {"content-type": ct, "upsert": "true"})
+                            f_url = supabase.storage.from_("mitarbeiter-dokumente").get_public_url(fp)
+                        
+                        supabase.table("qualifikationen").insert({
+                            "mitarbeiter_id": sel_ma, "kategorie": kat, "titel": titel,
+                            "datum_erhalten": str(d_erh), "gueltig_bis": str(d_bis) if d_bis else None,
+                            "beschreibung": desc, "dokument_url": f_url
+                        }).execute()
+                        st.success("Gespeichert!")
+                        st.rerun()

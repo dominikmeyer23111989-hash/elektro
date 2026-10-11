@@ -132,11 +132,11 @@ def render_login():
                             if method == "Notfall-PIN & Geburtsdatum":
                                 ma_geb = str(ma_rec.get("geburtsdatum", ""))
                                 ma_pin = str(ma_rec.get("notfall_pin", ""))
-                                if ma_geb == str(geburtsdatum) && ma_pin == notfall_pin && notfall_pin != "":
+                                if ma_geb == str(geburtsdatum) and ma_pin == notfall_pin and notfall_pin != "":
                                     verified = True
                             else:
                                 ma_code = str(ma_rec.get("recovery_code", ""))
-                                if ma_code == recovery_code && recovery_code != "":
+                                if ma_code == recovery_code and recovery_code != "":
                                     verified = True
 
                             if verified:
@@ -272,7 +272,7 @@ def render_app():
         available_menus = {k: v for k, v in ALL_MODULES.items() if k in allowed_menu_keys}
 
         if not available_menus:
-            st.warning("Keine zugewiesenen Menürechte gefunden.")
+            st.warning("Noch keine zugewiesenen Menürechte gefunden. Bitte wenden Sie sich an den Administrator.")
             return
 
         selected_main = st.sidebar.selectbox(

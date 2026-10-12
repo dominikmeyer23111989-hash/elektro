@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from modules.mitarbeiter import render_mitarbeiter_verwaltung, ALL_MODULES
 from modules.zeiterfassung import render_zeiterfassung
 from modules.steuerberater import render_steuerberater_export
+from modules.kunden import render_kunden_verwaltung
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
@@ -307,60 +308,4 @@ def render_app():
                 try:
                     jetzt_aus = datetime.now(ZoneInfo("Europe/Berlin")).isoformat(timespec='seconds')
                     supabase.table("zeiterfassung").update({
-                        "ausstempeln": jetzt_aus,
-                        "pause_minuten": sb_pause
-                    }).eq("id", offener_eintrag["id"]).execute()
-                    st.success("Ausgestempelt!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Fehler: {e}")
-
-    st.sidebar.markdown("---")
-
-    menu_selection = st.sidebar.radio(
-        "Navigation",
-        options=["🏠 Module & Hauptmenü", "👤 Mein Profil & Einstellungen"]
-    )
-
-    if st.sidebar.button("🚪 Abmelden", use_container_width=True):
-        st.session_state["authenticated"] = False
-        st.session_state["user_data"] = None
-        st.rerun()
-
-    st.sidebar.markdown("---")
-
-    if menu_selection == "👤 Mein Profil & Einstellungen":
-        render_mein_profil(supabase)
-    else:
-        extended_modules = {**ALL_MODULES, "10": "10. Steuerberater-Export"}
-        allowed_menu_keys = user.get("rechte", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
-        available_menus = {k: v for k, v in extended_modules.items() if k in allowed_menu_keys}
-
-        if not available_menus:
-            st.warning("Noch keine zugewiesenen Menürechte gefunden. Bitte wenden Sie sich an den Administrator.")
-            return
-
-        selected_main = st.sidebar.selectbox(
-            "Hauptmenü",
-            options=list(available_menus.keys()),
-            format_func=lambda x: available_menus[x]
-        )
-
-        if selected_main:
-            if selected_main == "1":
-                render_mitarbeiter_verwaltung(supabase)
-            elif selected_main == "3":
-                render_zeiterfassung(supabase)
-            elif selected_main == "10":
-                render_steuerberater_export(supabase)
-            else:
-                st.title(available_menus[selected_main])
-                st.info("Dieses Modul wird als Nächstes ausgebaut.")
-
-# -----------------------------------------------------------------------------
-# Kontrollfluss
-# -----------------------------------------------------------------------------
-if not st.session_state.get("authenticated", False):
-    render_login()
-else:
-    render_app()
+                        "ausstempeln": jetzt

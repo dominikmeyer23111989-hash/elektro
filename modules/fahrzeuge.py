@@ -6,9 +6,9 @@ from fpdf import FPDF
 class FahrzeugPDF(FPDF):
     def header(self):
         self.set_font('Helvetica', 'B', 14)
-        self.cell(0, 8, 'ELEKTRO-ENTERPRISE - FAHRZEUG- & MÄNGELREPORT', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
+        self.cell(0, 8, 'ELEKTRO-ENTERPRISE - FAHRZEUG- & MAENGELREPORT', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.set_font('Helvetica', 'I', 9)
-        self.cell(0, 5, 'Flottenübersicht und aktuelle Schadenshistorie (DSGVO-konform)', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
+        self.cell(0, 5, 'Flottenuebersicht und aktuelle Schadenshistorie (DSGVO-konform)', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.ln(5)
 
     def footer(self):
@@ -29,28 +29,87 @@ def generate_fahrzeug_bericht_pdf(f, maengel_liste):
     pdf.set_font('Helvetica', 'B', 12)
     pdf.cell(0, 6, clean_text(f"Fahrzeug: {f.get('kennzeichen')} - {f.get('fahrzeug_typ')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
-    pdf.cell(0, 6, clean_text(f"Aktueller Status: {f.get('status')} | Kilometerstand: {f.get('kilometerstand', 0)} km"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 6, clean_text(f"TÜV fällig bis: {f.get('tuev_bis', '-')}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, clean_text(f"Aktueller Status: {f.get('status')} | Kilometerstand: {f.get('kilometerstand', 0):,} km".replace(',', '.')), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, clean_text(f"TÜV fällig: {f.get('tuev_monat')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     pdf.set_font('Helvetica', 'B', 11)
-    pdf.cell(0, 6, "Historie der Mängelmeldungen:", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, "Historie der Maengelmeldungen:", new_x="LMARGIN", new_y="NEXT")
     
     pdf.set_font('Helvetica', 'B', 9)
     pdf.cell(30, 6, "Datum", border=1)
     pdf.cell(45, 6, "Titel / Problem", border=1)
-    pdf.cell(30, 6, "Priorität", border=1)
+    pdf.cell(30, 6, "Prioritaet", border=1)
     pdf.cell(30, 6, "Status", border=1, new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font('Helvetica', '', 9)
     for m in maengel_liste:
-        datum_str = str(m.get('erstellt_am', ''))[:10]
+        raw_dt = str(m.get('erstellt_am', ''))[:10]
+        try:
+            datum_str = datetime.strptime(raw_dt, "%Y-%m-%d").strftime("%d.%m.%Y")
+        except Exception:
+            datum_str = raw_dt
+
         pdf.cell(30, 5, clean_text(datum_str), border=1)
         pdf.cell(45, 5, clean_text(m.get('mangel_titel')), border=1)
         pdf.cell(30, 5, clean_text(m.get('prioritaet')), border=1)
         pdf.cell(30, 5, clean_text(m.get('status')), border=1, new_x="LMARGIN", new_y="NEXT")
 
     return pdf.output()
+
+def render_fahrzeug_warnungen_sidebar(supabase):
+    """Prüft in der Sidebar, ob TÜV in 4 Wochen ansteht oder offene Mängel existieren."""
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("#### 🚨 Flotten-Warnungen")
+
+    try:
+        # Offene Mängel zählen
+        m_res = supabase.table("fahrzeug_maengel").select("id, prioritaet", count="exact").eq("status", "Offen").execute()
+        offene_maengel_count = m_res.count if m_res.count is not None else len(m_res.data or [])
+        
+        # Fahrzeuge auf TÜV in den nächsten 4 Wochen prüfen (tuev_monat Format "MM.YYYY" oder "MM/YYYY")
+        f_res = supabase.table("fahrzeuge").select("kennzeichen, tuev_monat").execute()
+        fahrzeuge = f_res.data or []
+        
+        heute = date.today()
+        tuev_warnungen = []
+
+        for f in fahrzeuge:
+            t_str = f.get("tuev_monat")
+            if t_str:
+                try:
+                    # Normalisiere Trennzeichen
+                    t_clean = t_str.replace("/", ".")
+                    teile = t_clean.split(".")
+                    if len(teile) == 2:
+                        monat = int(teile[0])
+                        jahr = int(teile[1])
+                        # TÜV gilt bis zum letzten Tag des Monats
+                        if monat == 12:
+                            tuev_datum = date(jahr + 1, 1, 1)
+                        else:
+                            tuev_datum = date(jahr, monat + 1, 1)
+                        
+                        # Differenz in Tagen
+                        tage_bis_tuev = (tuev_datum - heute).days
+                        # Warnung wenn unter 30 Tage oder bereits überzogen
+                        if tage_bis_tuev <= 30:
+                            tuev_warnungen.append(f"{f.get('kennzeichen')} ({t_str})")
+                except Exception:
+                    pass
+
+        # Ausgabe in Sidebar
+        if offene_maengel_count > 0:
+            st.sidebar.error(f"⚠️ **{offene_maengel_count} offene Mängelmeldung(en)!**")
+        
+        if tuev_warnungen:
+            st.sidebar.warning(f"⚠️ **TÜV fällig:**\n" + "\n".join([f"- {k}" for k in tuev_warnungen]))
+
+        if offene_maengel_count == 0 and not tuev_warnungen:
+            st.sidebar.success("🟢 Flotten-Status: Alles optimal")
+
+    except Exception:
+        st.sidebar.info("Flotten-Check aktiv")
 
 def render_fahrzeug_verwaltung(supabase):
     st.title("🚗 6. Fahrzeugflotte & Mängelmeldungen")
@@ -64,7 +123,6 @@ def render_fahrzeug_verwaltung(supabase):
 
     st.markdown("---")
 
-    # Daten laden
     try:
         f_res = supabase.table("fahrzeuge").select("*").order("kennzeichen").execute()
         fahrzeuge_liste = f_res.data or []
@@ -82,7 +140,7 @@ def render_fahrzeug_verwaltung(supabase):
         st.subheader("Fahrzeugpark & technischer Status")
 
         if not fahrzeuge_liste:
-            st.info("Noch keine Fahrzeuge im System hinterlegt. Legen Sie im Reiter 'Neues Fahrzeug anlegen' Ihr erstes Fahrzeug an.")
+            st.info("Noch keine Fahrzeuge im System hinterlegt.")
             return
 
         display_data = []
@@ -93,7 +151,7 @@ def render_fahrzeug_verwaltung(supabase):
                 "Typ / Modell": f.get("fahrzeug_typ"),
                 "Status": f"{status_icon} {f.get('status')}",
                 "KM-Stand": f"{f.get('kilometerstand', 0):,} km".replace(",", "."),
-                "TÜV bis": f.get("tuev_bis") or "-",
+                "TÜV fällig": f.get("tuev_monat") or "-",
                 "Notizen": f.get("notizen") or "-"
             })
 
@@ -111,6 +169,16 @@ def render_fahrzeug_verwaltung(supabase):
         sel_fahrzeug = next(f for f in fahrzeuge_liste if f["id"] == sel_f_id)
         zugehoerige_maengel = [m for m in maengel_liste if m.get("fahrzeug_id") == sel_f_id]
 
+        # TÜV-Monat & Jahr aufteilen für Selectboxen
+        akt_tuev = sel_fahrzeug.get("tuev_monat") or "12.2026"
+        try:
+            p_monat, p_jahr = akt_tuev.replace("/", ".").split(".")
+            def_m_idx = int(p_monat) - 1
+            def_j_idx = [2024, 2025, 2026, 2027, 2028, 2029].index(int(p_jahr)) if int(p_jahr) in [2024, 2025, 2026, 2027, 2028, 2029] else 2
+        except Exception:
+            def_m_idx = 0
+            def_j_idx = 2
+
         with st.form("fahrzeug_edit_form"):
             col1, col2 = st.columns(2)
             with col1:
@@ -118,7 +186,13 @@ def render_fahrzeug_verwaltung(supabase):
                 e_typ = st.text_input("Fahrzeug-Typ / Modell *", value=sel_fahrzeug.get("fahrzeug_typ"))
                 e_baujahr = st.number_input("Baujahr", min_value=1990, max_value=2030, value=int(sel_fahrzeug.get("baujahr") or 2022))
             with col2:
-                e_tuev = st.date_input("TÜV fällig bis", value=date.fromisoformat(sel_fahrzeug.get("tuev_bis")) if sel_fahrzeug.get("tuev_bis") else date.today())
+                st.write("TÜV fällig (Monat / Jahr)")
+                c_m1, c_m2 = st.columns(2)
+                with c_m1:
+                    e_tuev_monat = st.selectbox("Monat", [f"{i:02d}" for i in range(1, 13)], index=def_m_idx)
+                with c_m2:
+                    e_tuev_jahr = st.selectbox("Jahr", [2024, 2025, 2026, 2027, 2028, 2029], index=def_j_idx)
+
                 e_km = st.number_input("Kilometerstand", min_value=0, value=int(sel_fahrzeug.get("kilometerstand") or 0), step=1000)
                 e_status = st.selectbox("Status", ["Einsatzbereit", "In Werkstatt", "Gesperrt / Defekt"], index=["Einsatzbereit", "In Werkstatt", "Gesperrt / Defekt"].index(sel_fahrzeug.get("status", "Einsatzbereit")))
 
@@ -131,12 +205,13 @@ def render_fahrzeug_verwaltung(supabase):
                 btn_del = st.form_submit_button("🗑️ Fahrzeug löschen", use_container_width=True)
 
             if btn_update:
+                tuev_kombiniert = f"{e_tuev_monat}.{e_tuev_jahr}"
                 try:
                     supabase.table("fahrzeuge").update({
                         "kennzeichen": e_kennzeichen,
                         "fahrzeug_typ": e_typ,
                         "baujahr": e_baujahr,
-                        "tuev_bis": str(e_tuev),
+                        "tuev_monat": tuev_kombiniert,
                         "kilometerstand": e_km,
                         "status": e_status,
                         "notizen": e_notizen
@@ -167,12 +242,6 @@ def render_fahrzeug_verwaltung(supabase):
     elif sub_menu == "🚨 Mängelmeldungen & Schäden":
         st.subheader("🚨 Mängelmeldungen & Werkstatt-Tickets")
 
-        col_m1, col_m2 = st.columns([2, 1])
-        with col_m1:
-            st.markdown("Hier sehen Sie alle gemeldeten Schäden und Mängel an der Fahrzeugflotte.")
-        with col_m2:
-            pass
-
         if not maengel_liste:
             st.info("Aktuell sind keine Mängel oder Schäden gemeldet. Alles im grünen Bereich!")
         else:
@@ -183,13 +252,18 @@ def render_fahrzeug_verwaltung(supabase):
                 status_color = "🔴" if m.get("status") == "Offen" else ("🟡" if m.get("status") == "In Bearbeitung" else "🟢")
                 prio_str = f"⚠️ Prio: {m.get('prioritaet')}" if m.get("prioritaet") in ["Hoch", "Sofort-Stopp"] else f"Prio: {m.get('prioritaet')}"
 
+                raw_dt = str(m.get('erstellt_am', ''))[:10]
+                try:
+                    erstellt_dt_de = datetime.strptime(raw_dt, "%Y-%m-%d").strftime("%d.%m.%Y")
+                except Exception:
+                    erstellt_dt_de = raw_dt
+
                 with st.expander(f"{status_color} [{f_info.get('kennzeichen', 'Unbekannt')}] {m.get('mangel_titel')} ({prio_str})"):
                     st.write(f"**Fahrzeug:** {f_info.get('fahrzeug_typ')} ({f_info.get('kennzeichen')})")
-                    st.write(f"**Gemeldet von:** {ma_info.get('vorname', 'Unbekannt')} {ma_info.get('nachname', '')} am {str(m.get('erstellt_am'))[:16]}")
+                    st.write(f"**Gemeldet von:** {ma_info.get('vorname', 'Unbekannt')} {ma_info.get('nachname', '')} am {erstellt_dt_de}")
                     st.write(f"**Beschreibung:** {m.get('beschreibung')}")
                     st.write(f"**Aktueller Status:** {m.get('status')}")
 
-                    # Status direkt ändern für Admins / Büro
                     new_status = st.selectbox("Status bearbeiten", ["Offen", "In Bearbeitung", "Erledigt"], index=["Offen", "In Bearbeitung", "Erledigt"].index(m.get("status", "Offen")), key=f"status_{m['id']}")
                     
                     if st.button("Status speichern", key=f"btn_status_{m['id']}"):
@@ -246,22 +320,29 @@ def render_fahrzeug_verwaltung(supabase):
                 n_typ = st.text_input("Fahrzeug-Typ / Modell *", placeholder="z.B. VW Crafter Kastenwagen")
                 n_baujahr = st.number_input("Baujahr", min_value=1990, max_value=2030, value=2024)
             with col2:
-                n_tuev = st.date_input("TÜV fällig bis", value=date.today())
+                st.write("TÜV fällig (Monat / Jahr)")
+                nc_1, nc_2 = st.columns(2)
+                with nc_1:
+                    n_tuev_monat = st.selectbox("Monat", [f"{i:02d}" for i in range(1, 13)], index=11)
+                with nc_2:
+                    n_tuev_jahr = st.selectbox("Jahr", [2024, 2025, 2026, 2027, 2028, 2029], index=2)
+
                 n_km = st.number_input("Aktueller Kilometerstand", min_value=0, value=15000, step=1000)
                 n_status = st.selectbox("Start-Status", ["Einsatzbereit", "In Werkstatt", "Gesperrt / Defekt"])
 
-            n_notizen = st.text_area("Ausstattung / Tankkarte / Besonderheiten", placeholder="z.B. Mit Regaleinbau, Dachträger, Tankkarten-PIN hinterlegt...")
+            n_notizen = st.text_area("Ausstattung / Tankkarte / Besonderheiten", placeholder="z.B. Mit Regaleinbau, Dachträger...")
 
             if st.form_submit_button("Fahrzeug speichern", type="primary", use_container_width=True):
                 if not n_kennzeichen or not n_typ:
                     st.warning("Bitte Kennzeichen und Fahrzeug-Typ angeben.")
                 else:
+                    tuev_kombiniert = f"{n_tuev_monat}.{n_tuev_jahr}"
                     try:
                         supabase.table("fahrzeuge").insert({
                             "kennzeichen": n_kennzeichen,
                             "fahrzeug_typ": n_typ,
                             "baujahr": n_baujahr,
-                            "tuev_bis": str(n_tuev),
+                            "tuev_monat": tuev_kombiniert,
                             "kilometerstand": n_km,
                             "status": n_status,
                             "notizen": n_notizen

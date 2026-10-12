@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from zoneinfo import ZoneInfo
 import pandas as pd
 from fpdf import FPDF
@@ -10,7 +10,7 @@ class SteuerberaterPDF(FPDF):
         self.set_font('Helvetica', 'B', 14)
         self.cell(0, 8, 'ELEKTRO-ENTERPRISE - MONATLICHE LOHN- & ZEITERFASSUNG', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.set_font('Helvetica', 'I', 9)
-        self.cell(0, 5, 'Monatsübersicht fuer die Steuerberatung / Lohnbuchhaltung (DSGVO-konform)', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
+        self.cell(0, 5, 'Monatsuebersicht fuer die Steuerberatung / Lohnbuchhaltung (DSGVO-konform)', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.ln(5)
 
     def footer(self):
@@ -18,87 +18,85 @@ class SteuerberaterPDF(FPDF):
         self.set_font('Helvetica', 'I', 8)
         self.cell(0, 10, f'Seite {self.page_no()}', align='C')
 
-def generate_steuerberater_pdf(ma_name, ma_nr, monat_str, jahr_str, tage_liste, gesamt_netto, gesamt_soll):
+def clean_text(text):
+    if not text:
+        return "-"
+    replacements = {
+        "🟢": "Erfolgreich / ",
+        "⚠️": "Hinweis: ",
+        "🔴": "Aktiv: "
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
+def generate_steuerberater_pdf_multi(mitarbeiter_daten_liste, monat_str, jahr_str):
+    """Erstellt ein einziges PDF-Dokument mit allen Mitarbeitern des Monats."""
     pdf = SteuerberaterPDF(orientation='P', unit='mm', format='A4')
-    pdf.add_page()
-    pdf.set_font('Helvetica', '', 10)
+    
+    for idx, data in enumerate(mitarbeiter_daten_liste):
+        if idx > 0:
+            pdf.add_page() # Für jeden Mitarbeiter eine neue Seite
+        else:
+            pdf.add_page()
 
-    pdf.set_font('Helvetica', 'B', 12)
-    pdf.cell(0, 6, f"Mitarbeiter: {ma_name} (Nr. {ma_nr})", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font('Helvetica', '', 10)
-    pdf.cell(0, 6, f"Abrechnungszeitraum: Monat {monat_str} / {jahr_str}", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
+        ma_name = data["name"]
+        ma_nr = data["nr"]
+        tage_liste = data["tage"]
+        gesamt_netto = data["netto"]
+        gesamt_soll = data["soll"]
 
-    pdf.set_font('Helvetica', 'B', 9)
-    pdf.cell(22, 6, "Datum", border=1)
-    pdf.cell(16, 6, "Tag", border=1)
-    pdf.cell(24, 6, "Kommen", border=1)
-    pdf.cell(24, 6, "Gehen", border=1)
-    pdf.cell(16, 6, "Pause", border=1)
-    pdf.cell(22, 6, "Netto Std.", border=1)
-    pdf.cell(22, 6, "Soll Std.", border=1)
-    pdf.cell(52, 6, "Status / Bemerkung", border=1, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font('Helvetica', 'B', 12)
+        pdf.cell(0, 6, clean_text(f"Mitarbeiter: {ma_name} (Nr. {ma_nr})"), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font('Helvetica', '', 10)
+        pdf.cell(0, 6, clean_text(f"Abrechnungszeitraum: Monat {monat_str} / {jahr_str}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(4)
 
-    pdf.set_font('Helvetica', '', 8)
-    for row in tage_liste:
-        pdf.cell(22, 5, str(row["Datum"]), border=1)
-        pdf.cell(16, 5, str(row["Tag"]), border=1)
-        pdf.cell(24, 5, str(row["Kommen"]), border=1)
-        pdf.cell(24, 5, str(row["Gehen"]), border=1)
-        pdf.cell(16, 5, str(row["Pause"]), border=1)
-        pdf.cell(22, 5, str(row["Netto"]), border=1)
-        pdf.cell(22, 5, str(row["Soll"]), border=1)
-        pdf.cell(52, 5, str(row["Status"]), border=1, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.cell(22, 6, "Datum", border=1)
+        pdf.cell(16, 6, "Tag", border=1)
+        pdf.cell(24, 6, "Kommen", border=1)
+        pdf.cell(24, 6, "Gehen", border=1)
+        pdf.cell(16, 6, "Pause", border=1)
+        pdf.cell(22, 6, "Netto Std.", border=1)
+        pdf.cell(22, 6, "Soll Std.", border=1)
+        pdf.cell(52, 6, "Status / Bemerkung", border=1, new_x="LMARGIN", new_y="NEXT")
 
-    pdf.ln(5)
-    pdf.set_font('Helvetica', 'B', 10)
-    pdf.cell(0, 6, f"Summe Netto-Arbeitsstunden im Monat: {gesamt_netto:.2f} Std.", new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 6, f"Summe Soll-Arbeitsstunden im Monat: {gesamt_soll:.2f} Std.", new_x="LMARGIN", new_y="NEXT")
-    diff = gesamt_netto - gesamt_soll
-    pdf.cell(0, 6, f"Monatssaldo (Ueber-/Minusstunden): {diff:+.2f} Std.", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font('Helvetica', '', 8)
+        for row in tage_liste:
+            pdf.cell(22, 5, clean_text(str(row["Datum"])), border=1)
+            pdf.cell(16, 5, clean_text(str(row["Tag"])), border=1)
+            pdf.cell(24, 5, clean_text(str(row["Kommen"])), border=1)
+            pdf.cell(24, 5, clean_text(str(row["Gehen"])), border=1)
+            pdf.cell(16, 5, clean_text(str(row["Pause"])), border=1)
+            pdf.cell(22, 5, clean_text(str(row["Netto"])), border=1)
+            pdf.cell(22, 5, clean_text(str(row["Soll"])), border=1)
+            pdf.cell(52, 5, clean_text(str(row["Status"])), border=1, new_x="LMARGIN", new_y="NEXT")
+
+        pdf.ln(5)
+        pdf.set_font('Helvetica', 'B', 10)
+        pdf.cell(0, 6, clean_text(f"Summe Netto-Arbeitsstunden im Monat: {gesamt_netto:.2f} Std."), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, clean_text(f"Summe Soll-Arbeitsstunden im Monat: {gesamt_soll:.2f} Std."), new_x="LMARGIN", new_y="NEXT")
+        diff = gesamt_netto - gesamt_soll
+        pdf.cell(0, 6, clean_text(f"Monatssaldo (Ueber-/Minusstunden): {diff:+.2f} Std."), new_x="LMARGIN", new_y="NEXT")
 
     return pdf.output()
 
-def render_steuerberater_export(supabase):
-    st.title("📊 Monatsabrechnung & Steuerberater-Export")
-    st.caption("Erstellen Sie vollständige monatliche Stempel- und Anwesenheitslisten (inklusive Urlaub & Krankheit) für die Lohnbuchhaltung.")
-
-    try:
-        ma_res = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer, soll_mo, soll_di, soll_mi, soll_do, soll_fr").eq("ist_aktiv", True).execute()
-        mitarbeiter_liste = ma_res.data or []
-    except Exception:
-        mitarbeiter_liste = []
-
-    if not mitarbeiter_liste:
-        st.warning("Keine aktiven Mitarbeiter gefunden.")
-        return
-
-    col_f1, col_f2, col_f3 = st.columns(3)
-    with col_f1:
-        sel_ma_id = st.selectbox(
-            "Mitarbeiter auswählen",
-            options=[m["id"] for m in mitarbeiter_liste],
-            format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in mitarbeiter_liste if m["id"] == x)
-        )
-    with col_f2:
-        monat_auswahl = st.selectbox("Monat", list(range(1, 13)), index=datetime.now().month - 1, format_func=lambda x: calendar.month_name[x])
-    with col_f3:
-        jahr_auswahl = st.selectbox("Jahr", [2024, 2025, 2026, 2027], index=2)
-
-    sel_ma = next(m for m in mitarbeiter_liste if m["id"] == sel_ma_id)
-
+def berechne_monatsdaten_fuer_ma(supabase, ma, monat_auswahl, jahr_auswahl):
+    """Berechnet die Monatsdaten für einen einzelnen Mitarbeiter."""
+    ma_id = ma["id"]
     anzahl_tage = calendar.monthrange(jahr_auswahl, monat_auswahl)[1]
     start_datum_monat = date(jahr_auswahl, monat_auswahl, 1)
     end_datum_monat = date(jahr_auswahl, monat_auswahl, anzahl_tage)
 
     try:
-        zeit_res = supabase.table("zeiterfassung").select("*").eq("mitarbeiter_id", sel_ma_id).gte("einstempeln", f"{start_datum_monat}T00:00:00").lte("einstempeln", f"{end_datum_monat}T23:59:59").execute()
+        zeit_res = supabase.table("zeiterfassung").select("*").eq("mitarbeiter_id", ma_id).gte("einstempeln", f"{start_datum_monat}T00:00:00").lte("einstempeln", f"{end_datum_monat}T23:59:59").execute()
         eintraege = zeit_res.data or []
     except Exception:
         eintraege = []
 
     try:
-        antrag_res = supabase.table("antraege").select("*").eq("mitarbeiter_id", sel_ma_id).eq("status", "genehmigt").execute()
+        antrag_res = supabase.table("antraege").select("*").eq("mitarbeiter_id", ma_id).eq("status", "genehmigt").execute()
         genehmigte_antraege = antrag_res.data or []
     except Exception:
         genehmigte_antraege = []
@@ -115,11 +113,11 @@ def render_steuerberater_export(supabase):
         return None
 
     tage_mapping = {
-        0: float(sel_ma.get("soll_mo", 8.0)),
-        1: float(sel_ma.get("soll_di", 8.0)),
-        2: float(sel_ma.get("soll_mi", 8.0)),
-        3: float(sel_ma.get("soll_do", 8.0)),
-        4: float(sel_ma.get("soll_fr", 6.0)),
+        0: float(ma.get("soll_mo", 8.0)),
+        1: float(ma.get("soll_di", 8.0)),
+        2: float(ma.get("soll_mi", 8.0)),
+        3: float(ma.get("soll_do", 8.0)),
+        4: float(ma.get("soll_fr", 6.0)),
         5: 0.0,
         6: 0.0
     }
@@ -173,9 +171,9 @@ def render_steuerberater_export(supabase):
                 gesamt_netto += netto_std
                 status_bemerkung = passender_eintrag.get("notiz") or "Gearbeitet"
             else:
-                status_bemerkung = "Laeuft aktiv"
+                status_bemerkung = "Laeuft noch aktiv"
         elif abwesenheit:
-            status_bemerkung = abwesenheit
+            status_bemerkung = f"{abwesenheit}"
         elif wochentag_idx >= 5:
             status_bemerkung = "Wochenende"
         else:
@@ -192,32 +190,92 @@ def render_steuerberater_export(supabase):
             "Status": status_bemerkung
         })
 
+    return {
+        "name": f"{ma['vorname']} {ma['nachname']}",
+        "nr": ma['mitarbeiternummer'],
+        "tage": tabelle_daten,
+        "netto": gesamt_netto,
+        "soll": gesamt_soll
+    }
+
+def render_steuerberater_export(supabase):
+    st.title("📊 Monatsabrechnung & Steuerberater-Export")
+    st.caption("Erstellen Sie monatliche Stempel- und Anwesenheitslisten – wahlweise für einzelne Mitarbeiter oder als **Gesamt-PDF für den gesamten Betrieb**.")
+
+    try:
+        ma_res = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer, soll_mo, soll_di, soll_mi, soll_do, soll_fr").eq("ist_aktiv", True).order("mitarbeiternummer").execute()
+        mitarbeiter_liste = ma_res.data or []
+    except Exception:
+        mitarbeiter_liste = []
+
+    if not mitarbeiter_liste:
+        st.warning("Keine aktiven Mitarbeiter gefunden.")
+        return
+
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        monat_auswahl = st.selectbox("Monat auswählen", list(range(1, 13)), index=datetime.now().month - 1, format_func=lambda x: calendar.month_name[x])
+    with col_f2:
+        jahr_auswahl = st.selectbox("Jahr auswählen", [2024, 2025, 2026, 2027], index=2)
+
     st.markdown("---")
-    st.markdown(f"### Monatsübersicht für: **{sel_ma['vorname']} {sel_ma['nachname']}** ({calendar.month_name[monat_auswahl]} {jahr_auswahl})")
+
+    # --- HAUPTAKTION: GESAMTABRECHNUNG FÜR ALLE MITARBEITER ---
+    st.subheader("🏢 Betriebs-Gesamtexport (Alle Mitarbeiter)")
+    st.info(f"💡 Generiert eine einzige PDF-Datei mit den lückenlosen Monatszeiten aller **{len(mitarbeiter_liste)} aktiven Mitarbeiter** für {calendar.month_name[monat_auswahl]} {jahr_auswahl}.")
+
+    if st.button("🚀 Gesamt-PDF für alle Mitarbeiter generieren", type="primary", use_container_width=True):
+        with st.spinner("Berechne Zeiten und erstelle Gesamt-PDF..."):
+            alle_daten = []
+            for ma in mitarbeiter_liste:
+                ma_daten = berechne_monatsdaten_fuer_ma(supabase, ma, monat_auswahl, jahr_auswahl)
+                alle_daten.append(ma_daten)
+
+            pdf_bytes_gesamt = generate_steuerberater_pdf_multi(
+                mitarbeiter_daten_liste=alle_daten,
+                monat_str=calendar.month_name[monat_auswahl],
+                jahr_str=str(jahr_auswahl)
+            )
+
+            st.success("✅ Gesamt-PDF erfolgreich erstellt!")
+            st.download_button(
+                label=f"📥 Gesamte Betriebs-Lohnliste ({calendar.month_name[monat_auswahl]} {jahr_auswahl}) herunterladen (PDF)",
+                data=bytes(pdf_bytes_gesamt),
+                file_name=f"Steuerberater_Gesamtliste_Betrieb_{monat_auswahl}_{jahr_auswahl}.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True
+            )
+
+    st.markdown("---")
+    st.subheader("🔍 Alternativ: Einzelansicht & Einzelauswahl")
+
+    sel_ma_id = st.selectbox(
+        "Mitarbeiter für Detailansicht wählen",
+        options=[m["id"] for m in mitarbeiter_liste],
+        format_func=lambda x: next(f"{m['mitarbeiternummer']} - {m['vorname']} {m['nachname']}" for m in mitarbeiter_liste if m["id"] == x)
+    )
+
+    sel_ma = next(m for m in mitarbeiter_liste if m["id"] == sel_ma_id)
+    einzel_daten = berechne_monatsdaten_fuer_ma(supabase, sel_ma, monat_auswahl, jahr_auswahl)
 
     col_m1, col_m2, col_m3 = st.columns(3)
-    col_m1.metric("Gesamt Netto-Stunden", f"{round(gesamt_netto, 2)} Std.")
-    col_m2.metric("Gesamt Soll-Stunden", f"{round(gesamt_soll, 2)} Std.")
-    col_m3.metric("Saldo (Über-/Minustunden)", f"{(gesamt_netto - gesamt_soll):+.2f} Std.")
+    col_m1.metric("Gesamt Netto-Stunden", f"{round(einzel_daten['netto'], 2)} Std.")
+    col_m2.metric("Gesamt Soll-Stunden", f"{round(einzel_daten['soll'], 2)} Std.")
+    col_m3.metric("Saldo (Über-/Minustunden)", f"{(einzel_daten['netto'] - einzel_daten['soll']):+.2f} Std.")
 
-    st.markdown("---")
-    st.dataframe(pd.DataFrame(tabelle_daten), use_container_width=True)
+    st.dataframe(pd.DataFrame(einzel_daten["tage"]), use_container_width=True)
 
-    pdf_bytes = generate_steuerberater_pdf(
-        ma_name=f"{sel_ma['vorname']} {sel_ma['nachname']}",
-        ma_nr=sel_ma['mitarbeiternummer'],
+    pdf_bytes_einzel = generate_steuerberater_pdf_multi(
+        mitarbeiter_daten_liste=[einzel_daten],
         monat_str=calendar.month_name[monat_auswahl],
-        jahr_str=str(jahr_auswahl),
-        tage_liste=tabelle_daten,
-        gesamt_netto=gesamt_netto,
-        gesamt_soll=gesamt_soll
+        jahr_str=str(jahr_auswahl)
     )
 
     st.download_button(
-        label=f"📥 Steuerberater-PDF für {sel_ma['vorname']} {sel_ma['nachname']} ({calendar.month_name[monat_auswahl]} {jahr_auswahl}) herunterladen",
-        data=bytes(pdf_bytes),
+        label=f"📥 Einzel-PDF für {sel_ma['vorname']} {sel_ma['nachname']} herunterladen",
+        data=bytes(pdf_bytes_einzel),
         file_name=f"Steuerberater_Zeiten_{sel_ma['mitarbeiternummer']}_{monat_auswahl}_{jahr_auswahl}.pdf",
         mime="application/pdf",
-        type="primary",
         use_container_width=True
     )

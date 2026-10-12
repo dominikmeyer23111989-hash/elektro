@@ -23,14 +23,12 @@ def generate_steuerberater_pdf(ma_name, ma_nr, monat_str, jahr_str, tage_liste, 
     pdf.add_page()
     pdf.set_font('Helvetica', '', 10)
 
-    # Kopfdaten des Mitarbeiters
     pdf.set_font('Helvetica', 'B', 12)
     pdf.cell(0, 6, f"Mitarbeiter: {ma_name} (Nr. {ma_nr})", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
     pdf.cell(0, 6, f"Abrechnungszeitraum: Monat {monat_str} / {jahr_str}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
-    # Tabellenkopf
     pdf.set_font('Helvetica', 'B', 9)
     pdf.cell(22, 6, "Datum", border=1)
     pdf.cell(16, 6, "Tag", border=1)
@@ -65,7 +63,6 @@ def render_steuerberater_export(supabase):
     st.title("📊 Monatsabrechnung & Steuerberater-Export")
     st.caption("Erstellen Sie vollständige monatliche Stempel- und Anwesenheitslisten (inklusive Urlaub & Krankheit) für die Lohnbuchhaltung.")
 
-    # Mitarbeiter laden
     try:
         ma_res = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer, soll_mo, soll_di, soll_mi, soll_do, soll_fr").eq("ist_aktiv", True).execute()
         mitarbeiter_liste = ma_res.data or []
@@ -86,16 +83,14 @@ def render_steuerberater_export(supabase):
     with col_f2:
         monat_auswahl = st.selectbox("Monat", list(range(1, 13)), index=datetime.now().month - 1, format_func=lambda x: calendar.month_name[x])
     with col_f3:
-        jahr_auswahl = st.selectbox("Jahr", [2024, 2025, 2026, 2027], index=2) # 2026 als Standard
+        jahr_auswahl = st.selectbox("Jahr", [2024, 2025, 2026, 2027], index=2)
 
     sel_ma = next(m for m in mitarbeiter_liste if m["id"] == sel_ma_id)
 
-    # Tage des Monats ermitteln
     anzahl_tage = calendar.monthrange(jahr_auswahl, monat_auswahl)[1]
     start_datum_monat = date(jahr_auswahl, monat_auswahl, 1)
     end_datum_monat = date(jahr_auswahl, monat_auswahl, anzahl_tage)
 
-    # Zeiteinträge & Anträge des Monats aus DB laden
     try:
         zeit_res = supabase.table("zeiterfassung").select("*").eq("mitarbeiter_id", sel_ma_id).gte("einstempeln", f"{start_datum_monat}T00:00:00").lte("einstempeln", f"{end_datum_monat}T23:59:59").execute()
         eintraege = zeit_res.data or []
@@ -108,7 +103,6 @@ def render_steuerberater_export(supabase):
     except Exception:
         genehmigte_antraege = []
 
-    # Hilfsfunktion zur Prüfung, ob an einem Datum Urlaub/Krankheit vorliegt
     def get_abwesenheit(d_check):
         for a in genehmigte_antraege:
             try:
@@ -126,8 +120,8 @@ def render_steuerberater_export(supabase):
         2: float(sel_ma.get("soll_mi", 8.0)),
         3: float(sel_ma.get("soll_do", 8.0)),
         4: float(sel_ma.get("soll_fr", 6.0)),
-        5: 0.0, # Samstag
-        6: 0.0  # Sonntag
+        5: 0.0,
+        6: 0.0
     }
     wochentage_kurz = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 
@@ -135,7 +129,6 @@ def render_steuerberater_export(supabase):
     gesamt_netto = 0.0
     gesamt_soll = 0.0
 
-    # Jeden Tag des Monats durchgehen
     for tag_nr in range(1, anzahl_tage + 1):
         aktueller_tag = date(jahr_auswahl, monat_auswahl, tag_nr)
         wochentag_idx = aktueller_tag.weekday()
@@ -143,7 +136,6 @@ def render_steuerberater_export(supabase):
         tages_soll = tage_mapping.get(wochentag_idx, 0.0)
         gesamt_soll += tages_soll
 
-        # Passenden Stempeltag suchen
         passender_eintrag = None
         for e in eintraege:
             try:
@@ -184,7 +176,6 @@ def render_steuerberater_export(supabase):
                 status_bemerkung = "⚠️ Läuft noch aktiv"
         elif abwesenheit:
             status_bemerkung = f"🟢 {abwesenheit}"
-            # Bei Urlaub/Krankheit wird das Soll in der Regel als erfüllt gewertet oder separat geführt
         elif wochentag_idx >= 5:
             status_bemerkung = "Wochenende"
         else:
@@ -212,7 +203,6 @@ def render_steuerberater_export(supabase):
     st.markdown("---")
     st.dataframe(pd.DataFrame(tabelle_daten), use_container_width=True)
 
-    # PDF Download Button
     pdf_bytes = generate_steuerberater_pdf(
         ma_name=f"{sel_ma['vorname']} {sel_ma['nachname']}",
         ma_nr=sel_ma['mitarbeiternummer'],

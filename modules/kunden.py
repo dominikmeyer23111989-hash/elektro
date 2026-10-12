@@ -31,7 +31,7 @@ def generate_kunden_pdf(k):
     name_zeile = f"{k.get('firmenname') + ' - ' if k.get('firmenname') else ''}{k.get('vorname', '')} {k.get('nachname', '')}"
     pdf.cell(0, 6, clean_text(f"Kunde: {name_zeile}"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
-    pdf.cell(0, 6, clean_text(f"Kundennummer: {k.get('kundennummer', '-')"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, clean_text(f"Kundennummer: {k.get('kundennummer', '-') }"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     fields = [
@@ -75,7 +75,6 @@ def render_kunden_verwaltung(supabase):
             kunden_liste = []
 
         if kunden_liste:
-            # Suchfunktion
             suchbegriff = st.text_input("🔍 Kunden suchen (Name, Firma, Ort oder Nummer)", placeholder="z.B. Müller, Essen, K-1001")
             
             gefilterte_kunden = kunden_liste
@@ -148,7 +147,7 @@ def render_kunden_verwaltung(supabase):
                             "email": e_email,
                             "notizen": e_notizen
                         }).eq("id", sel_kunden_id).execute()
-                        st.success("Kunderndaten erfolgreich aktualisiert!")
+                        st.success("Kundendaten erfolgreich aktualisiert!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Fehler beim Speichern: {e}")

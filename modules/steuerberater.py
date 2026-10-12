@@ -10,7 +10,7 @@ class SteuerberaterPDF(FPDF):
         self.set_font('Helvetica', 'B', 14)
         self.cell(0, 8, 'ELEKTRO-ENTERPRISE - MONATLICHE LOHN- & ZEITERFASSUNG', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.set_font('Helvetica', 'I', 9)
-        self.cell(0, 5, 'Monatsübersicht für die Steuerberatung / Lohnbuchhaltung (DSGVO-konform)', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
+        self.cell(0, 5, 'Monatsübersicht fuer die Steuerberatung / Lohnbuchhaltung (DSGVO-konform)', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.ln(5)
 
     def footer(self):
@@ -55,7 +55,7 @@ def generate_steuerberater_pdf(ma_name, ma_nr, monat_str, jahr_str, tage_liste, 
     pdf.cell(0, 6, f"Summe Netto-Arbeitsstunden im Monat: {gesamt_netto:.2f} Std.", new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 6, f"Summe Soll-Arbeitsstunden im Monat: {gesamt_soll:.2f} Std.", new_x="LMARGIN", new_y="NEXT")
     diff = gesamt_netto - gesamt_soll
-    pdf.cell(0, 6, f"Monatssaldo (Über-/Minusstunden): {diff:+.2f} Std.", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, f"Monatssaldo (Ueber-/Minusstunden): {diff:+.2f} Std.", new_x="LMARGIN", new_y="NEXT")
 
     return pdf.output()
 
@@ -173,9 +173,9 @@ def render_steuerberater_export(supabase):
                 gesamt_netto += netto_std
                 status_bemerkung = passender_eintrag.get("notiz") or "Gearbeitet"
             else:
-                status_bemerkung = "⚠️ Läuft noch aktiv"
+                status_bemerkung = "Laeuft aktiv"
         elif abwesenheit:
-            status_bemerkung = f"🟢 {abwesenheit}"
+            status_bemerkung = abwesenheit
         elif wochentag_idx >= 5:
             status_bemerkung = "Wochenende"
         else:

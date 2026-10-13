@@ -270,7 +270,7 @@ def render_app():
     st.sidebar.write(f"**{full_name}**")
     st.sidebar.caption(f"Nr: {user.get('mitarbeiternummer', '-')} | Rolle: {user.get('rolle', '-')}")
     
-    # --- 1. Schnell-Zeiterfassung (Weit oben) ---
+    # --- 1. Schnell-Zeiterfassung ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### ⏱️ Schnell-Zeiterfassung")
 
@@ -362,4 +362,35 @@ def render_app():
         st.rerun()
 
     # --- Routing im Hauptbereich ---
-    if st.session_state.get
+    if st.session_state.get("show_profil", False):
+        if st.button("⬅️ Zurück zum Hauptmenü"):
+            st.session_state["show_profil"] = False
+            st.rerun()
+        render_mein_profil(supabase)
+    else:
+        if selected_main:
+            if selected_main == "1":
+                render_mitarbeiter_verwaltung(supabase)
+            elif selected_main == "3":
+                render_zeiterfassung(supabase)
+            elif selected_main == "4":
+                render_auftraege_verwaltung(supabase)
+            elif selected_main == "5":
+                render_kunden_verwaltung(supabase)
+            elif selected_main == "6":
+                render_fahrzeug_verwaltung(supabase)
+            elif selected_main == "7":
+                render_gebaeude_verwaltung(supabase)
+            elif selected_main == "10":
+                render_steuerberater_export(supabase)
+            else:
+                st.title(available_menus[selected_main])
+                st.info("Dieses Modul wird als Nächstes ausgebaut.")
+
+# -----------------------------------------------------------------------------
+# Kontrollfluss
+# -----------------------------------------------------------------------------
+if not st.session_state.get("authenticated", False):
+    render_login()
+else:
+    render_app()

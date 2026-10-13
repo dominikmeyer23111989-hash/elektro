@@ -148,7 +148,6 @@ def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste):
     pdf.set_font('Helvetica', 'B', 11)
     pdf.cell(0, 6, "Digitale Abnahme & Unterschriften:", new_x="LMARGIN", new_y="NEXT")
     
-    col_width = 90
     draw_signature_on_pdf(pdf, a.get('kunde_unterschrift'), "Unterschrift Kunde / Auftraggeber:")
     draw_signature_on_pdf(pdf, a.get('mitarbeiter_unterschrift'), "Unterschrift Monteur / Einsatz-Team:")
 
@@ -356,7 +355,7 @@ def render_auftraege_verwaltung(supabase):
                                 except Exception as e:
                                     st.error(f"Fehler: {e}")
 
-                    # --- DIGITALE UNTERSCHRIFTEN (AUCH FÜR MONTEURE / KUNDEN) ---
+                    # --- DIGITALE UNTERSCHRIFTEN ---
                     st.markdown("---")
                     st.write("✍️ **Digitale Unterschriften (Abnahmeprotokoll)**")
                     
@@ -375,20 +374,22 @@ def render_auftraege_verwaltung(supabase):
                             key=f"canvas_kunde_{a['id']}"
                         )
                         if st.button("💾 Kunde Unterschrift speichern", key=f"btn_save_kunde_{a['id']}"):
-                            if canvas_kunde.image_data is not None:
-                                img = Image.fromarray(canvas_kunde.image_data.astype('uint8'), 'RGBA')
-                                rgb_img = Image.new("RGB", img.size, (255, 255, 255))
-                                rgb_img.paste(img, mask=img.split()[3])
-                                buffered = BytesIO()
-                                rgb_img.save(buffered, format="PNG")
-                                sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
-                                
-                                try:
+                            try:
+                                if canvas_kunde.image_data is not None:
+                                    img = Image.fromarray(canvas_kunde.image_data.astype('uint8'), 'RGBA')
+                                    rgb_img = Image.new("RGB", img.size, (255, 255, 255))
+                                    rgb_img.paste(img, mask=img.split()[3])
+                                    buffered = BytesIO()
+                                    rgb_img.save(buffered, format="PNG")
+                                    sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
+                                    
                                     supabase.table("auftraege").update({"kunde_unterschrift": sig_base64}).eq("id", a["id"]).execute()
                                     st.success("Kundenunterschrift erfolgreich gespeichert!")
                                     st.rerun()
-                                except Exception as e:
-                                    st.error(f"Fehler: {e}")
+                            except RuntimeError:
+                                st.warning("Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
+                            except Exception as e:
+                                st.error(f"Fehler: {e}")
 
                     with col_sig2:
                         st.markdown("Unterschrift Monteur / Team")
@@ -403,20 +404,22 @@ def render_auftraege_verwaltung(supabase):
                             key=f"canvas_ma_{a['id']}"
                         )
                         if st.button("💾 Monteur Unterschrift speichern", key=f"btn_save_ma_{a['id']}"):
-                            if canvas_ma.image_data is not None:
-                                img = Image.fromarray(canvas_ma.image_data.astype('uint8'), 'RGBA')
-                                rgb_img = Image.new("RGB", img.size, (255, 255, 255))
-                                rgb_img.paste(img, mask=img.split()[3])
-                                buffered = BytesIO()
-                                rgb_img.save(buffered, format="PNG")
-                                sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
-                                
-                                try:
+                            try:
+                                if canvas_ma.image_data is not None:
+                                    img = Image.fromarray(canvas_ma.image_data.astype('uint8'), 'RGBA')
+                                    rgb_img = Image.new("RGB", img.size, (255, 255, 255))
+                                    rgb_img.paste(img, mask=img.split()[3])
+                                    buffered = BytesIO()
+                                    rgb_img.save(buffered, format="PNG")
+                                    sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
+                                    
                                     supabase.table("auftraege").update({"mitarbeiter_unterschrift": sig_base64}).eq("id", a["id"]).execute()
                                     st.success("Monteurunterschrift erfolgreich gespeichert!")
                                     st.rerun()
-                                except Exception as e:
-                                    st.error(f"Fehler: {e}")
+                            except RuntimeError:
+                                st.warning("Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
+                            except Exception as e:
+                                st.error(f"Fehler: {e}")
 
                     st.markdown("---")
                     # Frische Daten für das PDF abrufen (inkl. gespeicherter Signaturen)

@@ -9,7 +9,7 @@ class AuftragPDF(FPDF):
         self.set_font('Helvetica', 'B', 14)
         self.cell(0, 8, 'ELEKTRO-ENTERPRISE - MONTAGESCHEIN / AUFTRAG', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.set_font('Helvetica', 'I', 9)
-        self.cell(0, 5, 'Offizieller Arbeitsauftrag inklusive Objekt- und Materialdaten', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
+        self.cell(0, 5, 'Offizieller Arbeitsauftrag inklusive Objekt-, Team- und Fahrzeugdaten', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.ln(5)
 
     def footer(self):
@@ -23,11 +23,9 @@ def clean_text(text):
     return str(text).encode('latin-1', 'replace').decode('latin-1')
 
 def format_de_datum(iso_string):
-    """Wandelt einen ISO-Zeitstempel in deutsches Format TT.MM.YYYY um"""
     if not iso_string:
         return "-"
     try:
-        # Falls es ein reines Datum ist oder ein ISO-String
         s = str(iso_string).split("T")[0]
         dt = datetime.strptime(s, "%Y-%m-%d")
         return dt.strftime('%d.%m.%Y')
@@ -35,7 +33,6 @@ def format_de_datum(iso_string):
         return str(iso_string)
 
 def format_de_zeit(iso_string):
-    """Wandelt einen ISO-Zeitstempel in deutsches Format TT.MM.YYYY um (mit Uhrzeit)"""
     if not iso_string:
         return "-"
     try:
@@ -46,7 +43,7 @@ def format_de_zeit(iso_string):
     except Exception:
         return str(iso_string)[:16]
 
-def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
+def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste):
     pdf = AuftragPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     pdf.set_font('Helvetica', '', 11)
@@ -55,10 +52,9 @@ def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
     pdf.cell(0, 6, clean_text(f"Auftragsnummer: {a.get('auftragsnummer')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
     
-    status_str = a.get('status', 'Offen')
+    status_str = a.get('status', 'In Planung')
     pdf.cell(0, 6, clean_text(f"Status: {status_str}"), new_x="LMARGIN", new_y="NEXT")
     
-    # Auftragsdatum & Termin im deutschen Format
     a_datum_de = format_de_datum(a.get('termin_um'))
     t_von_de = format_de_zeit(a.get('termin_um'))
     t_bis_de = format_de_zeit(a.get('termin_bis'))
@@ -85,10 +81,18 @@ def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
         if a.get('mieter_we'):
             pdf.cell(0, 6, clean_text(f"Betroffene WE / Mieter: {a.get('mieter_we')}"), new_x="LMARGIN", new_y="NEXT")
     else:
-        pdf.cell(0, 6, clean_text("Objektadresse: Direkt im Auftrag angegeben / Ohne Objekt-Verknüpfung"), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, clean_text("Objektadresse: Direkt im Auftrag angegeben"), new_x="LMARGIN", new_y="NEXT")
     
-    m_name = f"{monteur.get('vorname', '')} {monteur.get('nachname', '')}" if monteur else "Nicht zugewiesen"
-    pdf.cell(0, 6, clean_text(f"Zuständiger Monteur: {m_name}"), new_x="LMARGIN", new_y="NEXT")
+    # Team & Fahrzeug
+    team_names = ", ".join([f"{m.get('vorname', '')} {m.get('nachname', '')}" for m in team_liste]) if team_liste else "Kein Team zugewiesen"
+    pdf.cell(0, 6, clean_text(f"Einsatz-Team (Monteure / Azubis): {team_names}"), new_x="LMARGIN", new_y="NEXT")
+
+    if fahrzeug:
+        f_info = f"{fahrzeug.get('marke', '')} {fahrzeug.get('modell', '')} ({fahrzeug.get('kennzeichen', '')})"
+        pdf.cell(0, 6, clean_text(f"Zugewiesenes Fahrzeug: {f_info}"), new_x="LMARGIN", new_y="NEXT")
+    else:
+        pdf.cell(0, 6, clean_text("Zugewiesenes Fahrzeug: Kein Fahrzeug zugeordnet"), new_x="LMARGIN", new_y="NEXT")
+
     pdf.ln(4)
 
     pdf.set_font('Helvetica', 'B', 11)
@@ -106,15 +110,16 @@ def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
 
 def render_auftraege_verwaltung(supabase):
     st.title("📋 4. Auftrags- & Einsatzmanagement")
-    st.caption("Planen Sie Aufträge, weisen Sie Monteure zu (mit automatischer Urlaubs-/Krank-Prüfung) und erfassen Sie Material.")
+    st.caption("Planen Sie Aufträge, steuern Sie den Status, weisen Sie Teams & Fahrzeuge zu und erfassen Sie Material.")
 
     user_data = st.session_state.get("user_data", {})
     user_id = user_data.get("id")
     user_rolle = user_data.get("rolle", "")
     is_admin = user_rolle in ["Admin", "Büro", "Inhaber"]
 
+    # Daten laden
     try:
-        a_res = supabase.table("auftraege").select("*, kunden(*), gebaeude(*), mitarbeiter(id, vorname, nachname)").order("erstellt_am", desc=True).execute()
+        a_res = supabase.table("auftraege").select("*, kunden(*), gebaeude(*), fahrzeuge(*)").order("erstellt_am", desc=True).execute()
         auftraege_liste = a_res.data or []
     except Exception:
         auftraege_liste = []
@@ -132,11 +137,18 @@ def render_auftraege_verwaltung(supabase):
         gebaeude_liste = []
 
     try:
+        f_res = supabase.table("fahrzeuge").select("id, marke, modell, kennzeichen").execute()
+        fahrzeuge_liste = f_res.data or []
+    except Exception:
+        fahrzeuge_liste = []
+
+    try:
         m_res = supabase.table("mitarbeiter").select("id, vorname, nachname").eq("ist_aktiv", True).execute()
         mitarbeiter_liste = m_res.data or []
     except Exception:
         mitarbeiter_liste = []
 
+    # Verfügbare Mitarbeiter (Prüfung ob krank/Urlaub)
     verfuegbare_mitarbeiter = []
     heute_str = datetime.now().strftime("%Y-%m-%d")
 
@@ -155,73 +167,132 @@ def render_auftraege_verwaltung(supabase):
 
     tabs = st.tabs(tabs_optionen)
 
+    # --- TAB 1: ÜBERSICHT ---
     with tabs[0]:
         st.subheader("Auftragsliste")
 
-        sichtbare_auftraege = auftraege_liste
-        if not is_admin:
-            sichtbare_auftraege = [a for a in auftraege_liste if a.get("mitarbeiter_id") == user_id]
+        # Zugeordnete Mitarbeiter pro Auftrag laden
+        sichtbare_auftraege = []
+        for a in auftraege_liste:
+            try:
+                team_res = supabase.table("auftrag_mitarbeiter").select("mitarbeiter_id, mitarbeiter(id, vorname, nachname)").eq("auftrag_id", a["id"]).execute()
+                team_mitglieder = [t["mitarbeiter"] for t in (team_res.data or []) if t.get("mitarbeiter")]
+            except Exception:
+                team_mitglieder = []
+            
+            a["team"] = team_mitglieder
+            status = a.get("status", "In Planung")
+
+            # FILTER: Wenn Monteur (kein Admin), dürfen Aufträge "In Planung" nicht angezeigt werden!
+            if not is_admin:
+                if status == "In Planung":
+                    continue
+                # Prüfen ob eingeloggter User im Team ist
+                user_in_team = any(m["id"] == user_id for m in team_mitglieder)
+                if not user_in_team:
+                    continue
+
+            sichtbare_auftraege.append(a)
 
         if not sichtbare_auftraege:
-            st.info("Keine Aufträge vorhanden oder Ihnen sind aktuell keine Aufträge zugeteilt.")
+            st.info("Keine Aufträge vorhanden oder aktuell keine Freigabe für Ihr Konto (Aufträge 'In Planung' sind für Monteure unsichtbar).")
         else:
             for a in sichtbare_auftraege:
                 kunde = a.get("kunden") or {}
                 gebaeude = a.get("gebaeude") or {}
-                monteur = a.get("mitarbeiter") or {}
+                fahrzeug = a.get("fahrzeuge") or {}
+                team = a.get("team", [])
 
-                status_icon = "🟢" if a.get("status") == "Abgeschlossen" else ("🟡" if a.get("status") == "In Bearbeitung" else "🔴")
-                k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}".strip() or "Spontanauftrag / Kein Kunde"
-                g_adr = f"{gebaeude.get('strasse', '')} {gebaeude.get('hausnummer', '')}, {gebaeude.get('ort', '')}" if gebaeude else "Kein Objekt zugeordnet"
-                m_name = f"{monteur.get('vorname', '')} {monteur.get('nachname', '')}".strip() or "Unzugewiesen"
+                # Status Icons & Farben
+                status = a.get("status", "In Planung")
+                status_icons = {
+                    "In Planung": "⏳",
+                    "Offener Auftrag": "🔴",
+                    "In Bearbeitung": "🟡",
+                    "Erledigt": "🟢"
+                }
+                status_icon = status_icons.get(status, "⚪")
 
-                with st.expander(f"{status_icon} [{a.get('auftragsnummer')}] {k_name} | Objekt: {g_adr} (Monteur: {m_name})"):
+                k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}".strip() or "Spontanauftrag"
+                g_adr = f"{gebaeude.get('strasse', '')} {gebaeude.get('hausnummer', '')}, {gebaeude.get('ort', '')}" if gebaeude else "Kein Objekt"
+                team_names = ", ".join([f"{m['vorname']} {m['nachname']}" for m in team]) or "Kein Team zugewiesen"
+                f_info = f"{fahrzeug.get('marke', '')} {fahrzeug.get('modell', '')} ({fahrzeug.get('kennzeichen', '')})" if fahrzeug else "Kein Fahrzeug"
+
+                with st.expander(f"{status_icon} [{a.get('auftragsnummer')}] Status: {status} | Kunde: {k_name} | Team: {team_names}"):
                     a_datum_de = format_de_datum(a.get('termin_um'))
                     st.write(f"**Auftragsdatum:** {a_datum_de}")
+                    st.write(f"**Objektadresse:** {g_adr}")
                     st.write(f"**Auszuführende Arbeiten:** {a.get('arbeiten')}")
                     if a.get('mieter_we'):
                         st.write(f"**Mieter / WE:** {a.get('mieter_we')}")
                     
                     t_von_de = format_de_zeit(a.get('termin_um'))
                     t_bis_de = format_de_zeit(a.get('termin_bis'))
-                    st.write(f"**Geplanter Einsatztermin:** Von {t_von_de} bis {t_bis_de}")
-                    st.write(f"**Aktueller Status:** {a.get('status')}")
+                    st.write(f"**Einsatztermin:** Von {t_von_de} bis {t_bis_de}")
+                    st.write(f"**Zugewiesenes Fahrzeug:** {f_info}")
                     st.write(f"**Benötigtes Material:** {a.get('benoetigtes_material') or 'Noch nichts eingetragen'}")
 
                     st.markdown("---")
-                    st.write("🛠️ **Monteur-Bearbeitung & Materialerfassung**")
+                    st.write("🛠️ **Bearbeitung, Status & Materialerfassung**")
 
                     with st.form(f"auftrag_edit_{a['id']}"):
-                        neuer_status = st.selectbox("Status", ["Offen", "In Bearbeitung", "Abgeschlossen"], index=["Offen", "In Bearbeitung", "Abgeschlossen"].index(a.get("status", "Offen")))
+                        neuer_status = st.selectbox(
+                            "Status ändern", 
+                            ["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"], 
+                            index=["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"].index(status) if status in ["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"] else 0
+                        )
                         verbrauchtes_material = st.text_area("Benötigtes / Verbrautes Material eintragen", value=a.get("benoetigtes_material") or "")
                         
-                        neuer_monteur = None
-                        if is_admin and verfuegbare_mitarbeiter:
-                            neuer_monteur = st.selectbox(
-                                "Monteur zuweisen",
+                        neues_team = []
+                        neues_fahrzeug = a.get("fahrzeug_id")
+
+                        if is_admin:
+                            st.markdown("---")
+                            st.write("👑 **Admin-Bereich: Team & Fahrzeug neu zuweisen**")
+                            
+                            aktuelle_team_ids = [m["id"] for m in team]
+                            neues_team = st.multiselect(
+                                "Einsatz-Team (Monteure & Azubis wählen)",
                                 options=[m["id"] for m in verfuegbare_mitarbeiter],
                                 format_func=lambda x: next(f"{m['vorname']} {m['nachname']}" for m in verfuegbare_mitarbeiter if m["id"] == x),
-                                index=[m["id"] for m in verfuegbare_mitarbeiter].index(a.get("mitarbeiter_id")) if a.get("mitarbeiter_id") in [m["id"] for m in verfuegbare_mitarbeiter] else 0
+                                default=[mid for mid in aktuelle_team_ids if mid in [m["id"] for m in verfuegbare_mitarbeiter]]
                             )
 
-                        b_save = st.form_submit_button("💾 Änderungen / Material speichern", type="primary", use_container_width=True)
+                            fahrzeug_optionen = [None] + [f["id"] for f in fahrzeuge_liste]
+                            neues_fahrzeug = st.selectbox(
+                                "Fahrzeug zuweisen (optional)",
+                                options=fahrzeug_optionen,
+                                format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f['marke']} {f['modell']} ({f['kennzeichen']})" for f in fahrzeuge_liste if f["id"] == x), ""),
+                                index=fahrzeug_optionen.index(a.get("fahrzeug_id")) if a.get("fahrzeug_id") in fahrzeug_optionen else 0
+                            )
+
+                        b_save = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True)
 
                         if b_save:
                             try:
+                                # Update Basisdaten
                                 update_payload = {
                                     "status": neuer_status,
                                     "benoetigtes_material": verbrauchtes_material
                                 }
-                                if is_admin and neuer_monteur:
-                                    update_payload["mitarbeiter_id"] = neuer_monteur
+                                if is_admin:
+                                    update_payload["fahrzeug_id"] = neues_fahrzeug
 
                                 supabase.table("auftraege").update(update_payload).eq("id", a["id"]).execute()
+
+                                # Team aktualisieren falls Admin
+                                if is_admin:
+                                    supabase.table("auftrag_mitarbeiter").delete().eq("auftrag_id", a["id"]).execute()
+                                    if neues_team:
+                                        team_inserts = [{"auftrag_id": a["id"], "mitarbeiter_id": m_id} for m_id in neues_team]
+                                        supabase.table("auftrag_mitarbeiter").insert(team_inserts).execute()
+
                                 st.success("Auftrag erfolgreich aktualisiert!")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Fehler: {e}")
 
-                    pdf_bytes = generate_auftrag_pdf(a, kunde, gebaeude, monteur)
+                    pdf_bytes = generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team)
                     st.download_button(
                         label=f"📥 Auftrags-PDF herunterladen / Drucken ({a.get('auftragsnummer')})",
                         data=bytes(pdf_bytes),
@@ -230,6 +301,7 @@ def render_auftraege_verwaltung(supabase):
                         key=f"dl_{a['id']}"
                     )
 
+    # --- TAB 2: NEUEN AUFTRAG ANLEGEN (Nur Admin) ---
     if is_admin and len(tabs) > 1:
         with tabs[1]:
             st.subheader("Neuen Auftrag erstellen")
@@ -254,22 +326,31 @@ def render_auftraege_verwaltung(supabase):
                     )
 
                     n_mieter_we = st.text_input("Mieter / WE / Etage (optional)", placeholder="z.B. WE 4, 2. Obergeschoss links")
+                    
+                    n_status = st.selectbox("Initialer Status", ["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"], index=0)
+                    st.caption("ℹ️ Hinweis: Aufträge im Status 'In Planung' sind für Monteure unsichtbar.")
 
                 with col2:
                     if verfuegbare_mitarbeiter:
-                        n_monteur = st.selectbox(
-                            "Zuständiger Mitarbeiter (Monteur) *",
+                        n_team = st.multiselect(
+                            "Einsatz-Team (Monteure & Azubis wählen) *",
                             options=[m["id"] for m in verfuegbare_mitarbeiter],
                             format_func=lambda x: next(f"{m['vorname']} {m['nachname']}" for m in verfuegbare_mitarbeiter if m["id"] == x)
                         )
                     else:
-                        n_monteur = None
+                        n_team = []
                         st.warning("Keine verfügbaren Mitarbeiter gefunden.")
+
+                    fahrzeug_optionen = [None] + [f["id"] for f in fahrzeuge_liste]
+                    n_fahrzeug = st.selectbox(
+                        "Fahrzeug zuweisen (optional)",
+                        options=fahrzeug_optionen,
+                        format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f['marke']} {f['modell']} ({f['kennzeichen']})" for f in fahrzeuge_liste if f["id"] == x), "")
+                    )
                     
                     st.write("Termindaten & Auftragsdatum")
                     col_d1, col_d2 = st.columns(2)
                     with col_d1:
-                        # Deutsches Format TT.MM.JJJJ erzwungen
                         n_datum = st.date_input("Auftragsdatum (TT.MM.JJJJ)", value=datetime.today(), format="DD.MM.YYYY")
                     with col_d2:
                         n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.strptime("08:00", "%H:%M").time())
@@ -281,6 +362,8 @@ def render_auftraege_verwaltung(supabase):
                 if st.form_submit_button("Auftrag anlegen & zuweisen", type="primary", use_container_width=True):
                     if not n_auftragsnummer or not n_arbeiten:
                         st.warning("Bitte Auftragsnummer und auszuführende Arbeiten angeben.")
+                    elif not n_team:
+                        st.warning("Bitte wählen Sie mindestens einen Mitarbeiter für das Team aus.")
                     else:
                         try:
                             dt_von = datetime.combine(n_datum, n_uhr_von).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
@@ -290,15 +373,22 @@ def render_auftraege_verwaltung(supabase):
                                 "auftragsnummer": n_auftragsnummer,
                                 "kunde_id": n_kunde,
                                 "gebaeude_id": n_gebaeude,
-                                "mitarbeiter_id": n_monteur,
+                                "fahrzeug_id": n_fahrzeug,
                                 "arbeiten": n_arbeiten,
                                 "mieter_we": n_mieter_we,
                                 "termin_um": dt_von,
                                 "termin_bis": dt_bis,
                                 "benoetigtes_material": n_material,
-                                "status": "Offen"
+                                "status": n_status
                             }
-                            supabase.table("auftraege").insert(auftrag_payload).execute()
+                            res = supabase.table("auftraege").insert(auftrag_payload).execute()
+                            
+                            # Wenn erfolgreich, Verknüpfungstabelle für das Team füllen
+                            if res.data:
+                                neu_id = res.data[0]["id"]
+                                team_inserts = [{"auftrag_id": neu_id, "mitarbeiter_id": m_id} for m_id in n_team]
+                                supabase.table("auftrag_mitarbeiter").insert(team_inserts).execute()
+
                             st.success(f"Auftrag {n_auftragsnummer} erfolgreich angelegt!")
                             st.rerun()
                         except Exception as e:

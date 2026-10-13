@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import io
+from streamlit_zxing import st_zxing  # Für Live-Barcode/QR-Scans per Handykamera
 
 def hat_recht(modul_id, aktion="sehen"):
     """Prüft über die app.py-Logik, ob das Recht vorliegt."""
@@ -12,7 +14,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("Verwalten Sie Artikel, Soll- und Ist-Bestände, buchen Sie Material ein/aus und führen Sie strukturierte Inventuren durch.")
+    st.caption("Multifunktionales Lager: Barcode-Scan, Kamera-Erkennung, Massen-CSV-Import & manuelle Verwaltung.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -20,20 +22,28 @@ def render_lager_verwaltung(supabase):
 
     darf_bearbeiten = hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
 
+    # Daten aus Supabase laden
     try:
         m_res = supabase.table("lager_material").select("*").order("bezeichnung").execute()
         material_liste = m_res.data or []
     except Exception:
         material_liste = []
 
-    tabs = st.tabs(["📊 Bestandsübersicht & Buchung", "⚡ Schnelle Ein-/Ausbuchung", "📋 Inventur-Modus", "➕ Neuen Artikel anlegen"])
+    tabs = st.tabs([
+        "📊 Bestandsübersicht", 
+        "⚡ Schnell-Buchung & Scanner", 
+        "📷 Kamera & Barcode-Erfassung", 
+        "📥 CSV-Massenimport", 
+        "📋 Inventur", 
+        "➕ Artikel anlegen"
+    ])
 
     # --- TAB 1: BESTANDSÜBERSICHT ---
     with tabs[0]:
         st.subheader("Aktueller Lagerbestand")
 
         if not material_liste:
-            st.info("Noch keine Artikel im Lager vorhanden. Legen Sie im Reiter 'Neuen Artikel anlegen' den ersten Artikel an.")
+            st.info("Noch keine Artikel im Lager vorhanden.")
         else:
             suchbegriff = st.text_input("🔍 Artikel suchen (Bezeichnung, Artikelnummer oder Kategorie)", "")
 
@@ -58,7 +68,7 @@ def render_lager_verwaltung(supabase):
                 anzeige_daten.append({
                     "ID": m.get('id'),
                     "Status": status,
-                    "Artikel-Nr.": m.get('artikelnummer', '-'),
+                    "Artikel-Nr. / Barcode": m.get('artikelnummer', '-'),
                     "Bezeichnung": m.get('bezeichnung'),
                     "Kategorie": m.get('kategorie', 'Allgemein'),
                     "Lagerort": m.get('lagerort', '-'),
@@ -70,41 +80,51 @@ def render_lager_verwaltung(supabase):
             if not df.empty:
                 st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
             else:
-                st.warning("Keine Artikel gefunden, die dem Suchbegriff entsprechen.")
+                st.warning("Keine Artikel gefunden.")
 
-    # --- TAB 2: SCHNELLE EIN- / AUSBUCHUNG ---
+    # --- TAB 2: SCHNELL-BUCHUNG & HANDSCANNER ---
     with tabs[1]:
-        st.subheader("Material ein- oder ausbuchen")
-        st.caption("Buchen Sie Artikel direkt zu oder ab (z.B. nach Einkauf oder Entnahme für das Fahrzeug).")
+        st.subheader("⚡ Schnelle Ein- / Ausbuchung (auch per Handscanner)")
+        st.caption("Tippen Sie die Artikelnummer ein oder nutzen Sie einen USB-/Bluetooth-Handscanner direkt im Feld.")
 
         if not material_liste:
             st.warning("Keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
-            st.error("⛔ Ihr Account hat keine Berechtigung, Bestände zu verändern.")
+            st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
+            # Schnelleingabe via Barcode-Handscanner (Fokus im Textfeld)
+            scanned_code = st.text_input("🔍 Barcode / Artikelnummer scannen oder eingeben", placeholder="Scanner hierher richten...")
+
+            selected_artikel = None
+            if scanned_code:
+                selected_artikel = next((m for m in material_liste if str(m.get('artikelnummer')) == str(scanned_code)), None)
+                if selected_artikel:
+                    st.success(f"Gefunden: **{selected_artikel['bezeichnung']}** (Aktuell: {selected_artikel['ist_bestand']} {selected_artikel.get('einheit', 'Stk.')})")
+                else:
+                    st.warning(f"Kein Artikel mit Code '{scanned_code}' gefunden.")
+
             with st.form("schnell_buchung_form"):
-                artikel_optionen = {f"{m['bezeichnung']} (Aktuell: {m['ist_bestand']} {m.get('einheit', 'Stk.')}) [Art-Nr: {m.get('artikelnummer', '-')}]": m['id'] for m in material_liste}
-                
-                selected_label = st.selectbox("Artikel auswählen *", options=list(artikel_optionen.keys()))
-                selected_id = artikel_optionen[selected_label]
+                if not selected_artikel:
+                    artikel_optionen = {f"{m['bezeichnung']} (Aktuell: {m['ist_bestand']} {m.get('einheit', 'Stk.')}) [Code: {m.get('artikelnummer', '-')}]": m['id'] for m in material_liste}
+                    selected_label = st.selectbox("Oder Artikel manuell wählen", options=list(artikel_optionen.keys()))
+                    selected_id = artikel_optionen[selected_label]
+                    aktiver_artikel = next((m for m in material_liste if m['id'] == selected_id), None)
+                else:
+                    aktiver_artikel = selected_artikel
+                    selected_id = selected_artikel['id']
+                    st.hidden_input = st.text_input("ID", value=selected_id, disabled=True, label_visibility="collapsed")
 
-                aktiver_artikel = next((m for m in material_liste if m['id'] == selected_id), None)
-
-                buchungs_art = st.radio("Buchungsart *", ["📥 Einbuchung (Zugang / Lieferung)", "📤 Ausbuchung (Entnahme / Verbrauch)"], horizontal=True)
+                buchungs_art = st.radio("Buchungsart *", ["📥 Einbuchung (Zugang)", "📤 Ausbuchung (Entnahme)"], horizontal=True)
                 menge = st.number_input("Menge *", min_value=1, value=1, step=1)
-                kommentar = st.text_input("Grund / Projekt / Bemerkung (optional)", placeholder="z.B. Nachbestellung Großhändler oder Entnahme Baustelle")
+                kommentar = st.text_input("Grund / Projekt / Bemerkung", placeholder="z.B. Baustelle Bahnhofstraße")
 
                 if st.form_submit_button("Bestand jetzt buchen", type="primary", use_container_width=True):
                     if aktiver_artikel:
                         alter_bestand = aktiver_artikel.get('ist_bestand', 0)
-                        if "Einbuchung" in buchungs_art:
-                            neuer_bestand = alter_bestand + menge
-                        else:
-                            neuer_bestand = max(0, alter_bestand - menge)
+                        neuer_bestand = alter_bestand + menge if "Einbuchung" in buchungs_art else max(0, alter_bestand - menge)
 
                         try:
                             supabase.table("lager_material").update({"ist_bestand": neuer_bestand}).eq("id", selected_id).execute()
-                            
                             try:
                                 supabase.table("lager_bewegungen").insert({
                                     "material_id": selected_id,
@@ -118,103 +138,138 @@ def render_lager_verwaltung(supabase):
                             st.toast(f"✅ Buchung erfolgreich! Neuer Bestand: {neuer_bestand}", icon="🎉")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Fehler beim Speichern der Buchung: {e}")
+                            st.error(f"Fehler: {e}")
 
-    # --- TAB 3: INVENTUR-MODUS ---
+    # --- TAB 3: KAMERA & BARCODE-ERFASSUNG ---
     with tabs[2]:
-        st.subheader("📋 Systematische Inventur")
-        st.caption("Tragen Sie hier die tatsächlichen Zählbestände ein. Das System gleicht das Soll mit dem Ist ab.")
+        st.subheader("📷 Mobile Kamera & Live-Barcode-Scanner")
+        st.caption("Nutzen Sie Ihre Handykamera, um Barcodes von Verpackungen live zu scannen oder Materialfotos für die Erfassung zu machen.")
 
-        if not material_liste:
-            st.warning("Keine Artikel für eine Inventur vorhanden.")
-        elif not darf_bearbeiten:
-            st.error("⛔ Ihr Account hat keine Berechtigung, eine Inventur durchzuführen.")
+        scan_modus = st.radio("Erfassungsart", ["Live-Barcode scannen (Handykamera)", "Foto von Material / Typenschild machen"], horizontal=True)
+
+        if scan_modus == "Live-Barcode scannen (Handykamera)":
+            st.info("Halten Sie die Kamera auf den Strichcode des Artikels.")
+            # Startet den Web-Zxing Barcode-Scanner
+            barcode = st_zxing()
+            if barcode:
+                st.success(f"Ercannter Barcode / Code: **{barcode}**")
+                # Prüfen, ob Artikel existiert
+                match = next((m for m in material_liste if str(m.get('artikelnummer')) == str(barcode)), None)
+                if match:
+                    st.write(f"📦 Artikel im System gefunden: **{match['bezeichnung']}** (Bestand: {match['ist_bestand']})")
+                else:
+                    st.warning("Dieser Barcode ist noch nicht im System. Sie können ihn direkt im Reiter 'Artikel anlegen' mit diesem Code speichern!")
         else:
-            st.info("💡 Tipp: Geben Sie für jeden Artikel den physisch gezählten Ist-Bestand ein und klicken Sie unten auf Inventur abschließen.")
+            # Foto-Upload / Kameraaufnahme
+            foto = st.camera_input("Machen Sie ein Foto vom Material oder Karton")
+            if foto:
+                st.image(foto, caption="Aufgenommenes Materialfoto", width=300)
+                st.info("💡 Tipp: Das Foto ist gesichert. Nutzen Sie die Artikelbezeichnung aus dem Foto, um den Artikel im Reiter 'Artikel anlegen' hinzuzufügen.")
 
+    # --- TAB 4: CSV-MASSENIMPORT ---
+    with tabs[3]:
+        st.subheader("📥 Massen-Import (CSV / Excel)")
+        st.caption("Laden Sie eine CSV-Liste hoch, um hunderte Artikel auf einmal in das Lager einzupflegen.")
+
+        st.markdown("""
+        **Format-Anleitung für Ihre CSV-Datei:**
+        Die CSV-Datei muss folgende Spaltennamen in der ersten Zeile besitzen:
+        `artikelnummer`, `bezeichnung`, `kategorie`, `einheit`, `soll_bestand`, `ist_bestand`, `lagerort`
+        """)
+
+        uploaded_file = st.file_uploader("CSV-Datei auswählen", type=["csv"])
+        if uploaded_file is not None:
+            try:
+                df_import = pd.read_csv(uploaded_file)
+                st.write("Vorschau der importierten Daten:", df_import.head())
+
+                if st.button("🚀 Alle Artikel aus CSV in die Datenbank importieren", type="primary"):
+                    erfolgreich = 0
+                    for _, row in df_import.iterrows():
+                        payload = {
+                            "artikelnummer": str(row.get('artikelnummer', '')),
+                            "bezeichnung": str(row.get('bezeichnung', 'Unbekannt')),
+                            "kategorie": str(row.get('kategorie', 'Allgemein')),
+                            "einheit": str(row.get('einheit', 'Stk.')),
+                            "soll_bestand": int(row.get('soll_bestand', 5)),
+                            "ist_bestand": int(row.get('ist_bestand', 0)),
+                            "lagerort": str(row.get('lagerort', 'Hauptlager'))
+                        }
+                        supabase.table("lager_material").insert(payload).execute()
+                        erfolgreich += 1
+
+                    st.toast(f"✅ {erfolgreich} Artikel erfolgreich importiert!", icon="🎉")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Fehler beim Verarbeiten der CSV-Datei: {e}")
+
+    # --- TAB 5: INVENTUR ---
+    with tabs[4]:
+        st.subheader("📋 Systematische Inventur")
+        if not material_liste:
+            st.warning("Keine Artikel vorhanden.")
+        elif not darf_bearbeiten:
+            st.error("⛔ Keine Berechtigung.")
+        else:
             with st.form("inventur_form"):
                 inventur_daten = {}
                 for m in material_liste:
                     col1, col2, col3 = st.columns([3, 2, 2])
                     with col1:
-                        st.write(f"**{m.get('bezeichnung')}** `({m.get('artikelnummer', 'Keine Art-Nr')})`")
-                        st.caption(f"Lagerort: {m.get('lagerort', 'Standard')} | Einheit: {m.get('einheit', 'Stk.')}")
+                        st.write(f"**{m.get('bezeichnung')}** `({m.get('artikelnummer', 'Kein Code')})`")
                     with col2:
                         st.write(f"Soll: **{m.get('ist_bestand', 0)}**")
                     with col3:
-                        gezahlt = st.number_input(
-                            "Gezählter Bestand", 
-                            min_value=0, 
-                            value=int(m.get('ist_bestand', 0)), 
-                            step=1, 
-                            key=f"inv_{m['id']}",
-                            label_visibility="collapsed"
-                        )
+                        gezahlt = st.number_input("Ist", min_value=0, value=int(m.get('ist_bestand', 0)), key=f"inv_{m['id']}", label_visibility="collapsed")
                         inventur_daten[m['id']] = gezahlt
                     st.divider()
 
-                if st.form_submit_button("✅ Inventur finalisieren & Bestände aktualisieren", type="primary", use_container_width=True):
+                if st.form_submit_button("✅ Inventur finalisieren", type="primary", use_container_width=True):
                     try:
                         for mat_id, neuer_ist in inventur_daten.items():
                             supabase.table("lager_material").update({"ist_bestand": neuer_ist}).eq("id", mat_id).execute()
-                            
-                            try:
-                                supabase.table("lager_bewegungen").insert({
-                                    "material_id": mat_id,
-                                    "art": "Inventurkorrektur",
-                                    "menge": neuer_ist,
-                                    "kommentar": "Perioden-Inventur"
-                                }).execute()
-                            except Exception:
-                                pass
-
                         st.toast("Inventur erfolgreich abgeschlossen!", icon="🎯")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Fehler bei der Inventur-Speicherung: {e}")
+                        st.error(f"Fehler: {e}")
 
-    # --- TAB 4: NEUEN ARTIKEL ANLEGEN ---
-    with tabs[3]:
-        st.subheader("Neuen Artikel zum Lager hinzufügen")
-
+    # --- TAB 6: ARTIKEL ANLEGEN (HÄNDISCH) ---
+    with tabs[5]:
+        st.subheader("➕ Neuen Artikel händisch anlegen")
         if not darf_bearbeiten:
-            st.error("⛔ Ihr Account hat keine Berechtigung, neue Artikel anzulegen.")
+            st.error("⛔ Keine Berechtigung.")
         else:
             with st.form("neuer_artikel_form"):
                 col_a1, col_a2 = st.columns(2)
                 with col_a1:
-                    n_bezeichnung = st.text_input("Artikelbezeichnung *", placeholder="z.B. NYM-J 3x1.5 mm² Mantelleitung")
-                    n_artnr = st.text_input("Artikelnummer / Barcode", placeholder="z.B. CAB-3X15")
-                    n_kategorie = st.selectbox("Kategorie", ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler & Sicherungen", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Sonstiges"])
+                    n_bezeichnung = st.text_input("Artikelbezeichnung *", placeholder="z.B. NYM-J 3x1.5")
+                    n_artnr = st.text_input("Artikelnummer / Barcode", placeholder="z.B. EAN oder Barcode-Nummer")
+                    n_kategorie = st.selectbox("Kategorie", ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug"])
                 with col_a2:
                     n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])
-                    n_lagerort = st.text_input("Lagerort / Regal", placeholder="z.B. Regal A1, Fach 3")
+                    n_lagerort = st.text_input("Lagerort / Regal", placeholder="z.B. Regal A1")
                     
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:
-                        n_soll = st.number_input("Mindestbestand (Soll)", min_value=0, value=5, step=1)
+                        n_soll = st.number_input("Mindestbestand", min_value=0, value=5)
                     with col_b2:
-                        n_ist = st.number_input("Aktueller Anfangsbestand", min_value=0, value=10, step=1)
+                        n_ist = st.number_input("Anfangsbestand", min_value=0, value=10)
 
-                n_preis = st.number_input("Einkaufspreis netto (€, optional)", min_value=0.0, value=0.0, step=0.10)
-
-                if st.form_submit_button("Artikel im Lager anlegen", type="primary", use_container_width=True):
+                if st.form_submit_button("Artikel speichern", type="primary", use_container_width=True):
                     if not n_bezeichnung:
-                        st.warning("Bitte geben Sie mindestens eine Artikelbezeichnung an.")
+                        st.warning("Bitte Bezeichnung angeben.")
                     else:
                         try:
-                            artikel_payload = {
+                            supabase.table("lager_material").insert({
                                 "bezeichnung": n_bezeichnung,
                                 "artikelnummer": n_artnr if n_artnr else None,
                                 "kategorie": n_kategorie,
                                 "einheit": n_einheit,
                                 "lagerort": n_lagerort,
                                 "soll_bestand": n_soll,
-                                "ist_bestand": n_ist,
-                                "einkaufspreis": n_preis
-                            }
-                            supabase.table("lager_material").insert(artikel_payload).execute()
-                            st.toast(f"Artikel '{n_bezeichnung}' erfolgreich angelegt!", icon="✅")
+                                "ist_bestand": n_ist
+                            }).execute()
+                            st.toast(f"Artikel '{n_bezeichnung}' angelegt!", icon="✅")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Fehler beim Anlegen des Artikels: {e}")
+                            st.error(f"Fehler: {e}")

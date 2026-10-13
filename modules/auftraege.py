@@ -111,14 +111,29 @@ def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste):
     
     return pdf.output()
 
+def hat_recht(modul_id, aktion="sehen"):
+    """Prüft über die app.py-Logik, ob das Recht vorliegt."""
+    user = st.session_state.get("user_data", {})
+    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+        return True
+    rechte = user.get("rechte", [])
+    return f"{modul_id}_{aktion}" in rechte
+
 def render_auftraege_verwaltung(supabase):
     st.title("📋 4. Auftrags- & Einsatzmanagement")
     st.caption("Planen Sie Aufträge, steuern Sie den Status, weisen Sie Teams & Fahrzeuge zu und erfassen Sie Material.")
 
+    # 1. Grundrecht "Sehen" prüfen
+    if not hat_recht("4", "sehen"):
+        st.error("⛔ Sie haben keine Berechtigung, das Auftragsmodul aufzurufen.")
+        return
+
     user_data = st.session_state.get("user_data", {})
     user_id = user_data.get("id")
     user_rolle = user_data.get("rolle", "")
-    is_admin = user_rolle in ["Admin", "Büro", "Inhaber"]
+    
+    # Administratoren-Status über feines Recht "erstellen" oder "bearbeiten" oder klassische Rolle
+    is_admin = hat_recht("4", "erstellen") or hat_recht("4", "bearbeiten") or (user_rolle in ["Admin", "Büro", "Inhaber"])
 
     # Daten laden
     try:
@@ -163,8 +178,10 @@ def render_auftraege_verwaltung(supabase):
             pass
         verfuegbare_mitarbeiter.append(ma)
 
+    # Tabs dynamisch aufbauen basierend auf dem Recht "4_erstellen"
     tabs_optionen = ["📋 Auftragsübersicht"]
-    if is_admin:
+    darf_erstellen = hat_recht("4", "erstellen")
+    if darf_erstellen:
         tabs_optionen.append("➕ Neuen Auftrag anlegen")
 
     tabs = st.tabs(tabs_optionen)
@@ -196,6 +213,8 @@ def render_auftraege_verwaltung(supabase):
         if not sichtbare_auftraege:
             st.info("Keine Aufträge vorhanden oder aktuell keine Freigabe für Ihr Konto (Aufträge 'In Planung' sind für Monteure unsichtbar).")
         else:
+            darf_bearbeiten = hat_recht("4", "bearbeiten")
+
             for a in sichtbare_auftraege:
                 kunde = a.get("kunden") or {}
                 gebaeude = a.get("gebaeude") or {}
@@ -226,7 +245,7 @@ def render_auftraege_verwaltung(supabase):
                     st.write(f"**Auszuführende Arbeiten:** {a.get('arbeiten')}")
                     if a.get('mieter_we'):
                         st.write(f"**Mieter / WE:** {a.get('mieter_we')}")
-                    
+                
                     t_von_de = format_de_zeit(a.get('termin_um'))
                     t_bis_de = format_de_zeit(a.get('termin_bis'))
                     st.write(f"**Einsatztermin:** Von {t_von_de} bis {t_bis_de}")
@@ -236,13 +255,17 @@ def render_auftraege_verwaltung(supabase):
                     st.markdown("---")
                     st.write("🛠️ **Bearbeitung, Status & Materialerfassung**")
 
+                    if not darf_bearbeiten:
+                        st.info("ℹ️ Ihr Account hat nur Leserechte für Aufträge. Sie können keine Änderungen speichern.")
+                    
                     with st.form(f"auftrag_edit_{a['id']}"):
                         neuer_status = st.selectbox(
                             "Status ändern", 
                             ["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"], 
-                            index=["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"].index(status) if status in ["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"] else 0
+                            index=["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"].index(status) if status in ["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"] else 0,
+                            disabled=not darf_bearbeiten
                         )
-                        verbrauchtes_material = st.text_area("Benötigtes / Verbrautes Material eintragen", value=a.get("benoetigtes_material") or "")
+                        verbrauchtes_material = st.text_area("Benötigtes / Verbrautes Material eintragen", value=a.get("benoetigtes_material") or "", disabled=not darf_bearbeiten)
                         
                         neues_team = []
                         neues_fahrzeug = a.get("fahrzeug_id")
@@ -256,7 +279,8 @@ def render_auftraege_verwaltung(supabase):
                                 "Einsatz-Team (Monteure & Azubis wählen)",
                                 options=[m["id"] for m in verfuegbare_mitarbeiter],
                                 format_func=lambda x: next(f"{m['vorname']} {m['nachname']}" for m in verfuegbare_mitarbeiter if m["id"] == x),
-                                default=[mid for mid in aktuelle_team_ids if mid in [m["id"] for m in verfuegbare_mitarbeiter]]
+                                default=[mid for mid in aktuelle_team_ids if mid in [m["id"] for m in verfuegbare_mitarbeiter]],
+                                disabled=not darf_bearbeiten
                             )
 
                             fahrzeug_optionen = [None] + [f["id"] for f in fahrzeuge_liste]
@@ -264,32 +288,33 @@ def render_auftraege_verwaltung(supabase):
                                 "Fahrzeug zuweisen (optional)",
                                 options=fahrzeug_optionen,
                                 format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f.get('marke', f.get('titel', 'Fahrzeug'))} ({f.get('kennzeichen', '')})" for f in fahrzeuge_liste if f["id"] == x), ""),
-                                index=fahrzeug_optionen.index(a.get("fahrzeug_id")) if a.get("fahrzeug_id") in fahrzeug_optionen else 0
+                                index=fahrzeug_optionen.index(a.get("fahrzeug_id")) if a.get("fahrzeug_id") in fahrzeug_optionen else 0,
+                                disabled=not darf_bearbeiten
                             )
 
-                        b_save = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True)
+                        if darf_bearbeiten:
+                            b_save = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True)
+                            if b_save:
+                                try:
+                                    update_payload = {
+                                        "status": neuer_status,
+                                        "benoetigtes_material": verbrauchtes_material
+                                    }
+                                    if is_admin:
+                                        update_payload["fahrzeug_id"] = neues_fahrzeug
 
-                        if b_save:
-                            try:
-                                update_payload = {
-                                    "status": neuer_status,
-                                    "benoetigtes_material": verbrauchtes_material
-                                }
-                                if is_admin:
-                                    update_payload["fahrzeug_id"] = neues_fahrzeug
+                                    supabase.table("auftraege").update(update_payload).eq("id", a["id"]).execute()
 
-                                supabase.table("auftraege").update(update_payload).eq("id", a["id"]).execute()
+                                    if is_admin:
+                                        supabase.table("auftrag_mitarbeiter").delete().eq("auftrag_id", a["id"]).execute()
+                                        if neues_team:
+                                            team_inserts = [{"auftrag_id": a["id"], "mitarbeiter_id": m_id} for m_id in neues_team]
+                                            supabase.table("auftrag_mitarbeiter").insert(team_inserts).execute()
 
-                                if is_admin:
-                                    supabase.table("auftrag_mitarbeiter").delete().eq("auftrag_id", a["id"]).execute()
-                                    if neues_team:
-                                        team_inserts = [{"auftrag_id": a["id"], "mitarbeiter_id": m_id} for m_id in neues_team]
-                                        supabase.table("auftrag_mitarbeiter").insert(team_inserts).execute()
-
-                                st.success("Auftrag erfolgreich aktualisiert!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Fehler: {e}")
+                                    st.success("Auftrag erfolgreich aktualisiert!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Fehler: {e}")
 
                     pdf_bytes = generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team)
                     st.download_button(
@@ -300,8 +325,8 @@ def render_auftraege_verwaltung(supabase):
                         key=f"dl_{a['id']}"
                     )
 
-    # --- TAB 2: NEUEN AUFTRAG ANLEGEN (Nur Admin) ---
-    if is_admin and len(tabs) > 1:
+    # --- TAB 2: NEUEN AUFTRAG ANLEGEN ---
+    if darf_erstellen and len(tabs) > 1:
         with tabs[1]:
             st.subheader("Neuen Auftrag erstellen")
 
@@ -310,7 +335,6 @@ def render_auftraege_verwaltung(supabase):
                 with col1:
                     n_auftragsnummer = st.text_input("Auftragsnummer *", value=f"A-{datetime.now().strftime('%Y%m%d')}-01")
                     
-                    # Flexibler Kunde: Entweder aus Liste oder Freitext
                     kunden_optionen = [None] + [k["id"] for k in kunden_liste]
                     n_kunde = st.selectbox(
                         "Auftraggeber (Kunde aus Modul wählen)",
@@ -319,7 +343,6 @@ def render_auftraege_verwaltung(supabase):
                     )
                     n_freitext_kunde = st.text_input("Oder Spontankunde / Name & Telefon (Freitext)", placeholder="z.B. Herr Müller, Tel: 0171-1234567")
 
-                    # Flexibler Auftragsort: Entweder aus Gebäude-Modul oder Freitext
                     gebaeude_optionen = [None] + [g["id"] for g in gebaeude_liste]
                     n_gebaeude = st.selectbox(
                         "Auftragsort (Gebäude / Objekt wählen)",

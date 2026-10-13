@@ -14,7 +14,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("Blitzschnelles Lager: Optimiert für Barcode-Handscanner, Sofort-Buchung & Etikettendruck.")
+    st.caption("Das Barcode-Lager: Artikel anlegen & per Scanner/Eingabe buchen.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -28,13 +28,17 @@ def render_lager_verwaltung(supabase):
     except Exception:
         material_liste = []
 
+    # Sicherstellen, dass der temporäre Barcode im Session State existiert
+    if "aktiver_barcode" not in st.session_state:
+        st.session_state["aktiver_barcode"] = ""
+
     tabs = st.tabs([
         "📊 Bestandsübersicht", 
-        "⚡ Blitz-Buchung (Scanner)", 
+        "⚡ Schritt 2: Schnell-Buchung (Scan/Suche)", 
         "🖨️ Etiketten drucken",
         "📥 CSV-Massenimport", 
         "📋 Inventur", 
-        "➕ Artikel anlegen"
+        "➕ Schritt 1: Artikel anlegen"
     ])
 
     # --- TAB 1: BESTANDSÜBERSICHT ---
@@ -44,7 +48,7 @@ def render_lager_verwaltung(supabase):
         if not material_liste:
             st.info("Noch keine Artikel im Lager vorhanden.")
         else:
-            suchbegriff = st.text_input("🔍 Artikel suchen (Bezeichnung, Artikelnummer oder Kategorie)", "")
+            suchbegriff = st.text_input("🔍 Artikel suchen (Bezeichnung oder Artikelnummer)", "")
 
             gefilterte_liste = []
             for mat in material_liste:
@@ -67,7 +71,7 @@ def render_lager_verwaltung(supabase):
                 anzeige_daten.append({
                     "ID": m.get('id'),
                     "Status": status,
-                    "Artikel-Nr. / Barcode": m.get('artikelnummer', '-'),
+                    "Artikel-Nr.": m.get('artikelnummer', '-'),
                     "Bezeichnung": m.get('bezeichnung'),
                     "Kategorie": m.get('kategorie', 'Allgemein'),
                     "Lagerort": m.get('lagerort', '-'),
@@ -81,34 +85,40 @@ def render_lager_verwaltung(supabase):
             else:
                 st.warning("Keine Artikel gefunden.")
 
-    # --- TAB 2: BLITZ-BUCHUNG (FÜR HANDSCANNER) ---
+    # --- TAB 2: SCHNELL-BUCHUNG (SCHRITT 2) ---
     with tabs[1]:
-        st.subheader("⚡ Blitz-Ein- / Ausbuchung")
-        st.caption("Perfekt für Handscanner: Barcode einscannen, Menge anpassen, buchen. Fertig.")
+        st.subheader("⚡ Schritt 2: Material Ein- oder Ausbuchen")
+        st.caption("Geben Sie den Barcode ein oder wählen Sie den Artikel aus, um den Bestand anzupassen.")
 
         if not material_liste:
             st.warning("Keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            # Hier greift der Handscanner direkt ein
-            scanned_code = st.text_input("🔍 Barcode scannen / Artikelnummer eingeben", placeholder="Scanner hierher richten...", key="blitz_scanner_input")
+            # Barcode-Eingabefeld für den Scanner oder manuelle Eingabe
+            scanned_code = st.text_input("🔍 Barcode / Artikelnummer scannen oder eingeben", placeholder="Code hier eingeben...", key="buchung_scan_input")
 
             selected_artikel = None
             if scanned_code:
-                selected_artikel = next((m for m in material_liste if str(m.get('artikelnummer')) == str(scanned_code)), None)
+                selected_artikel = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(scanned_code).strip().lower()), None)
                 if selected_artikel:
-                    st.success(f"Gefunden: **{selected_artikel['bezeichnung']}** (Lagerbestand: {selected_artikel['ist_bestand']} {selected_artikel.get('einheit', 'Stk.')})")
+                    st.success(f"Gefunden: **{selected_artikel['bezeichnung']}** (Aktueller Bestand: {selected_artikel['ist_bestand']} {selected_artikel.get('einheit', 'Stk.')})")
                 else:
-                    st.warning(f"⚠️ Unbekannter Code '{scanned_code}'. Legen Sie diesen Artikel zuerst unter 'Artikel anlegen' an.")
+                    st.warning(f"⚠️ Kein Artikel mit dem Code '{scanned_code}' gefunden.")
+
+            # Fallback: Wenn kein Code gescannt wurde, direkt per Dropdown wählen
+            if not selected_artikel:
+                artikel_optionen = {f"{m['bezeichnung']} (Code: {m.get('artikelnummer', '-')}) [Bestand: {m['ist_bestand']}]": m for m in material_liste}
+                auswahl_label = st.selectbox("Oder Artikel direkt aus Liste wählen", options=list(artikel_optionen.keys()))
+                selected_artikel = artikel_optionen[auswahl_label]
 
             if selected_artikel:
-                with st.form("blitz_buchungs_form"):
-                    buchungs_art = st.radio("Aktion", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"], horizontal=True)
+                with st.form("schnell_buchung_form"):
+                    buchungs_art = st.radio("Buchungsart", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"], horizontal=True)
                     menge = st.number_input("Menge", min_value=1, value=1, step=1)
-                    kommentar = st.text_input("Projekt / Baustelle", placeholder="z.B. BV Schulstraße")
+                    kommentar = st.text_input("Projekt / Baustelle", placeholder="z.B. Baustelle Hauptstraße")
 
-                    if st.form_submit_button("Jetzt buchen", type="primary", use_container_width=True):
+                    if st.form_submit_button("Bestand jetzt buchen", type="primary", use_container_width=True):
                         alter_bestand = selected_artikel.get('ist_bestand', 0)
                         neuer_bestand = alter_bestand + menge if "Zugang" in buchungs_art else max(0, alter_bestand - menge)
 
@@ -118,10 +128,10 @@ def render_lager_verwaltung(supabase):
                                 "material_id": selected_artikel['id'],
                                 "art": "Einbuchung" if "Zugang" in buchungs_art else "Ausbuchung",
                                 "menge": menge,
-                                "kommentar": kommentar or "Blitzbuchung"
+                                "kommentar": kommentar or "Buchung"
                             }).execute()
 
-                            st.toast(f"✅ Gebucht! Neuer Bestand: {neuer_bestand}", icon="🎉")
+                            st.toast(f"✅ Erfolgreich gebucht! Neuer Bestand: {neuer_bestand}", icon="🎉")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler: {e}")
@@ -129,7 +139,7 @@ def render_lager_verwaltung(supabase):
     # --- TAB 3: ETIKETTEN DRUCKEN ---
     with tabs[2]:
         st.subheader("🖨️ Barcode-Etiketten generieren")
-        st.caption("Drucken Sie Strichcodes für Ihre Regale, damit der Handscanner sofort greift.")
+        st.caption("Drucken Sie Strichcodes für Ihre Regale aus.")
 
         if not material_liste:
             st.warning("Keine Artikel vorhanden.")
@@ -208,17 +218,23 @@ def render_lager_verwaltung(supabase):
                     st.toast("Inventur abgeschlossen!", icon="🎯")
                     st.rerun()
 
-    # --- TAB 6: ARTIKEL ANLEGEN ---
+    # --- TAB 6: ARTIKEL ANLEGEN (SCHRITT 1) ---
     with tabs[5]:
-        st.subheader("➕ Neuen Artikel anlegen")
+        st.subheader("➕ Schritt 1: Neuen Artikel anlegen")
+        st.caption("Scannen Sie den Barcode oder tippen Sie ihn ein – er wird direkt in das Formular übernommen.")
+
         if not darf_bearbeiten:
             st.error("⛔ Keine Berechtigung.")
         else:
+            # Eingabefeld außerhalb des Formulars, um den Barcode sofort zu erfassen
+            erfasster_code = st.text_input("1️⃣ Barcode / Artikelnummer scannen oder eingeben", placeholder="Hier Barcode scannen...", key="anlegen_barcode_input")
+
             with st.form("neuer_artikel_form"):
                 col_a1, col_a2 = st.columns(2)
                 with col_a1:
                     n_bezeichnung = st.text_input("Artikelbezeichnung *", placeholder="z.B. NYM-J 3x1.5")
-                    n_artnr = st.text_input("Artikelnummer / Barcode", placeholder="Mit Handscanner einscannen oder tippen")
+                    # Der hier eingelesene Code landet automatisch im Feld
+                    n_artnr = st.text_input("Artikelnummer / Barcode", value=erfasster_code)
                     n_kategorie = st.selectbox("Kategorie", ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug"])
                 with col_a2:
                     n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])
@@ -230,7 +246,7 @@ def render_lager_verwaltung(supabase):
                     with col_b2:
                         n_ist = st.number_input("Anfangsbestand", min_value=0, value=10)
 
-                if st.form_submit_button("Artikel speichern", type="primary", use_container_width=True):
+                if st.form_submit_button("Artikel im Lager speichern", type="primary", use_container_width=True):
                     if not n_bezeichnung:
                         st.warning("Bitte Bezeichnung angeben.")
                     else:
@@ -244,7 +260,7 @@ def render_lager_verwaltung(supabase):
                                 "soll_bestand": n_soll,
                                 "ist_bestand": n_ist
                             }).execute()
-                            st.toast(f"Artikel '{n_bezeichnung}' angelegt!", icon="✅")
+                            st.toast(f"Artikel '{n_bezeichnung}' erfolgreich angelegt!", icon="✅")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler: {e}")

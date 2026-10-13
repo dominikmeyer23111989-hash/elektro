@@ -5,6 +5,7 @@ from io import BytesIO
 import barcode
 from barcode.writer import ImageWriter
 import qrcode
+import streamlit.components.v1 as components
 
 def hat_recht(modul_id, aktion="sehen"):
     user = st.session_state.get("user_data", {})
@@ -15,7 +16,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Live-Suche, Lagerort-Anzeige & Barcode-/QR-Workflow.")
+    st.caption("High-Speed Lager: Live-Kamera-Scanner, Turbo-Suche & Lagerort-Fokus.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -30,9 +31,13 @@ def render_lager_verwaltung(supabase):
     except Exception:
         material_liste = []
 
+    # Session State für den gescannten Live-Code initialisieren
+    if "scanned_qr_code" not in st.session_state:
+        st.session_state["scanned_qr_code"] = ""
+
     tabs = st.tabs([
         "📊 Bestandsübersicht & Turbo-Suche", 
-        "⚡ Schnell-Buchung (Entnahme / Zugang)", 
+        "⚡ Schnell-Buchung (Live-Scan / Suche)", 
         "🖨️ Etiketten (QR & Barcode)",
         "➕ Artikel anlegen",
         "✏️ Artikel bearbeiten / löschen",
@@ -47,7 +52,6 @@ def render_lager_verwaltung(supabase):
         if not material_liste:
             st.info("Noch keine Artikel im Lager vorhanden.")
         else:
-            # Sofort-Suchfeld mit Live-Filter
             suchbegriff = st.text_input("🔍 Turbo-Suche (Nach Bezeichnung, Artikelnummer, Kategorie oder Lagerort suchen)...", "", key="turbo_suche_input")
 
             gefilterte_liste = []
@@ -86,30 +90,58 @@ def render_lager_verwaltung(supabase):
             else:
                 st.warning("Keine Artikel gefunden.")
 
-    # --- TAB 2: SCHNELL-BUCHUNG MIT TURBO-AUSWAHL & LAGERORT ---
+    # --- TAB 2: SCHNELL-BUCHUNG MIT ECHTEM LIVE-KAMERA-SCANNER ---
     with tabs[1]:
-        st.subheader("⚡ Material Ein- oder Ausbuchen")
-        st.caption("Geben Sie den Code ein oder tippen Sie den Namen ein – der Lagerort wird sofort angezeigt.")
+        st.subheader("⚡ Material Ein- oder Ausbuchen per Live-Scan")
+        st.caption("Öffnen Sie die Live-Kamera, um einen QR-Code am Regal oder Karton in Echtzeit zu scannen.")
 
         if not material_liste:
             st.warning("Noch keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            # Schnelle Eingabe per Scanner / Tastatur
-            eingabe_code = st.text_input("🔍 Barcode / Artikelnummer eingeben oder scannen", placeholder="Code eintippen oder scannen...", key="schnell_buchung_code_input")
+            # JavaScript Live QR-Scanner (nutzt die Handykamera direkt im Browser via html5-qrcode)
+            scanner_html = """
+            <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; text-align: center;">
+                <h4>📷 Live QR-Kamera-Scanner</h4>
+                <div id="reader" style="width: 100%; max-width: 400px; margin: auto;"></div>
+                <p id="scan-result" style="font-weight: bold; color: green; margin-top: 10px;"></p>
+            </div>
+            <script src="https://unpkg.com/html5-qrcode"></script>
+            <script>
+                function onScanSuccess(decodedText, decodedResult) {
+                    document.getElementById('scan-result').innerText = "Erkannt: " + decodedText;
+                    // Streamlit steuern, indem wir den Wert in die URL / State geben oder posten
+                    // Alternativ über Streamlit Component communication
+                    window.parent.postMessage({type: 'streamlit:setComponentValue', value: decodedText}, '*');
+                }
+                let html5QrcodeScanner = new Html5QrcodeScanner(
+                    "reader", { fps: 10, qrbox: { width: 250, height: 250 } }, /* verbose= */ false);
+                html5QrcodeScanner.render(onScanSuccess, (err) => {});
+            </script>
+            """
+            
+            # Den Scanner rendern und prüfen, ob ein Code zurückkommt
+            scanned_val = components.html(scanner_html, height=430)
+            
+            # Manuelle Eingabe oder Fallback, falls der Scanner genutzt wurde
+            col_s1, col_s2 = st.columns([2, 1])
+            with col_s1:
+                eingabe_code = st.text_input("🔍 Code manuell eingeben oder gescannten Wert übernehmen", value=st.session_state.get("scanned_qr_code", ""), placeholder="Code eintippen oder scannen...", key="schnell_buchung_code_input")
+            with col_s2:
+                if st.button("🗑️ Code zurücksetzen", use_container_width=True):
+                    st.session_state["scanned_qr_code"] = ""
+                    st.rerun()
 
             selected_artikel = None
             if eingabe_code:
-                # Exakte Suche nach Code oder Teilsuche
                 selected_artikel = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(eingabe_code).strip().lower()), None)
                 
-            # Wenn kein exakter Code getroffen wurde oder man direkt wählen will:
+            # Wenn kein exakter Code gefunden wurde, Turbo-Auswahlliste anzeigen
             if not selected_artikel:
                 st.markdown("---")
                 st.write("💡 **Oder direkt nach Artikel / Lagerort filtern:**")
                 
-                # Filterbares Auswahlfeld (ersetzt das starre Dropdown für große Datenmengen)
                 such_filter = st.text_input("Suchfilter für Auswahlliste", placeholder="z.B. NYM oder Regal B...", key="filter_auswahl_buchung")
                 
                 passende_optionen = []
@@ -125,7 +157,7 @@ def render_lager_verwaltung(supabase):
                 else:
                     st.warning("Kein Artikel entspricht dem Filter.")
 
-            # Wenn ein Artikel aktiv ist, Buchungsmaske anzeigen
+            # Wenn ein Artikel aktiv ist, Buchungsmaske mit Lagerort-Anzeige anzeigen
             if selected_artikel:
                 st.success(f"📦 **{selected_artikel['bezeichnung']}**")
                 col_info1, col_info2, col_info3 = st.columns(3)
@@ -162,7 +194,7 @@ def render_lager_verwaltung(supabase):
     # --- TAB 3: ETIKETTEN DRUCKEN (QR & BARCODE) ---
     with tabs[2]:
         st.subheader("🖨️ Etiketten für Regale & Kartons drucken")
-        st.caption("Drucken Sie QR-Codes (für Handys) und Barcodes (für Scanner) aus und kleben Sie diese direkt an den Lagerort/Regalplatz.")
+        st.caption("Drucken Sie QR-Codes und Barcodes aus und kleben Sie diese an die Lagerorte.")
 
         if not material_liste:
             st.warning("Keine Artikel vorhanden.")

@@ -248,7 +248,7 @@ def render_mein_profil(supabase):
                         st.error("Das eingegebene aktuelle Passwort ist falsch.")
 
 # -----------------------------------------------------------------------------
-# 4. Hauptanwendung & Routing (Inklusive Sidebar-Stempeluhr mit Status-Ball)
+# 4. Hauptanwendung & Routing (Neu angeordnete Sidebar)
 # -----------------------------------------------------------------------------
 def render_app():
     user = st.session_state.get("user_data")
@@ -266,11 +266,10 @@ def render_app():
     st.sidebar.write(f"**{full_name}**")
     st.sidebar.caption(f"Nr: {user.get('mitarbeiternummer', '-')} | Rolle: {user.get('rolle', '-')}")
     
-    # --- Live Stempelfunktion mit grünem/rotem Ball direkt oben in der Sidebar ---
+    # --- 1. Live Stempelfunktion ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### ⏱️ Schnell-Zeiterfassung")
 
-    # Aktuellen Stempel-Status und individuelle Standard-Pause aus DB laden
     try:
         offen_res = supabase.table("zeiterfassung").select("*").eq("mitarbeiter_id", user_id).is_("ausstempeln", "null").execute()
         offener_eintrag = offen_res.data[0] if offen_res.data else None
@@ -317,23 +316,24 @@ def render_app():
                 except Exception as e:
                     st.error(f"Fehler: {e}")
 
-    # --- FLOTTEN- & TÜV-WARNUNGEN IN DER SIDEBAR ---
-    render_fahrzeug_warnungen_sidebar(supabase)
-
+    # --- 2. Menüauswahl direkt unter der Stempeluhr ---
     st.sidebar.markdown("---")
-
     menu_selection = st.sidebar.radio(
         "Navigation",
         options=["🏠 Module & Hauptmenü", "👤 Mein Profil & Einstellungen"]
     )
 
+    # --- 3. Flotten- & TÜV-Warnungen (unterhalb der Navigation) ---
+    render_fahrzeug_warnungen_sidebar(supabase)
+
+    # --- 4. Ganz unten: Profil-Einstellungen & Abmelden-Button ---
+    st.sidebar.markdown("---")
     if st.sidebar.button("🚪 Abmelden", use_container_width=True):
         st.session_state["authenticated"] = False
         st.session_state["user_data"] = None
         st.rerun()
 
-    st.sidebar.markdown("---")
-
+    # --- Routing ---
     if menu_selection == "👤 Mein Profil & Einstellungen":
         render_mein_profil(supabase)
     else:
@@ -366,9 +366,9 @@ def render_app():
                 st.title(available_menus[selected_main])
                 st.info("Dieses Modul wird als Nächstes ausgebaut.")
 
-# ---------------------------------------------------
+# -----------------------------------------------------------------------------
 # Kontrollfluss
-# ---------------------------------------------------
+# -----------------------------------------------------------------------------
 if not st.session_state.get("authenticated", False):
     render_login()
 else:

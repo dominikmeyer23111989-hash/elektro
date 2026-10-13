@@ -6,7 +6,7 @@ from modules.mitarbeiter import render_mitarbeiter_verwaltung, ALL_MODULES
 from modules.zeiterfassung import render_zeiterfassung
 from modules.steuerberater import render_steuerberater_export
 from modules.kunden import render_kunden_verwaltung
-from modules.fahrzeuge import render_fahrzeug_verwaltung
+from modules.fahrzeuge import render_fahrzeug_verwaltung, render_fahrzeug_warnungen_sidebar
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
@@ -317,6 +317,9 @@ def render_app():
                 except Exception as e:
                     st.error(f"Fehler: {e}")
 
+    # --- FLOTTEN- & TÜV-WARNUNGEN IN DER SIDEBAR ---
+    render_fahrzeug_warnungen_sidebar(supabase)
+
     st.sidebar.markdown("---")
 
     menu_selection = st.sidebar.radio(
@@ -366,7 +369,7 @@ def render_app():
 # -----------------------------------------------------------------------------
 # Kontrollfluss
 # -----------------------------------------------------------------------------
-if not st.session_state.get("authenticated", False):
+if not solange := not st.session_state.get("authenticated", False):
     render_login()
 else:
     render_app()

@@ -3,13 +3,19 @@ from datetime import datetime
 import pandas as pd
 from fpdf import FPDF
 from zoneinfo import ZoneInfo
+from streamlit_drawable_canvas import st_canvas
+from PIL import Image
+from io import BytesIO
+import base64
+import tempfile
+import os
 
 class AuftragPDF(FPDF):
     def header(self):
         self.set_font('Helvetica', 'B', 14)
-        self.cell(0, 8, 'ELEKTRO-ENTERPRISE - MONTAGESCHEIN / AUFTRAG', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
+        self.cell(0, 8, 'ELEKTRO-ENTERPRISE - MONTAGESCHEIN / ABNAHMEPROTOKOLL', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.set_font('Helvetica', 'I', 9)
-        self.cell(0, 5, 'Offizieller Arbeitsauftrag inklusive Objekt-, Team- und Fahrzeugdaten', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
+        self.cell(0, 5, 'Offizieller Arbeitsauftrag inklusive Objekt-, Team-, Fahrzeug- und Signaturdaten', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.ln(5)
 
     def footer(self):
@@ -42,6 +48,34 @@ def format_de_zeit(iso_string):
         return dt.strftime('%d.%m.%Y um %H:%M Uhr')
     except Exception:
         return str(iso_string)[:16]
+
+def draw_signature_on_pdf(pdf, base64_str, label):
+    """Fügt eine Base64-Unterschrift sauber in das FPDF-Dokument ein."""
+    if not base64_str or not base64_str.startswith('data:image'):
+        return
+    try:
+        header, encoded = base64_str.split(",", 1)
+        data = base64.b64decode(encoded)
+        image = Image.open(BytesIO(data))
+        
+        # Auf weißem Hintergrund normalisieren
+        rgb_img = Image.new("RGB", image.size, (255, 255, 255))
+        if image.mode == 'RGBA':
+            rgb_img.paste(image, mask=image.split()[3])
+        else:
+            rgb_img.paste(image)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            rgb_img.save(tmp.name, format="PNG")
+            tmp_path = tmp.name
+            
+        pdf.ln(4)
+        pdf.set_font('Helvetica', 'B', 10)
+        pdf.cell(0, 5, clean_text(label), new_x="LMARGIN", new_y="NEXT")
+        pdf.image(tmp_path, w=45) # ca. 45 mm Breite für die Unterschrift
+        os.unlink(tmp_path)
+    except Exception as e:
+        print(f"Fehler beim Rendern der Unterschrift: {e}")
 
 def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste):
     pdf = AuftragPDF(orientation='P', unit='mm', format='A4')
@@ -108,7 +142,16 @@ def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste):
     pdf.cell(0, 6, "Verbrauchtes / Benötigtes Material:", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
     pdf.multi_cell(0, 5, clean_text(a.get('benoetigtes_material', 'Noch kein Material eingetragen.')))
+    pdf.ln(6)
+
+    # Unterschriften auf dem PDF ausgeben
+    pdf.set_font('Helvetica', 'B', 11)
+    pdf.cell(0, 6, "Digitale Abnahme & Unterschriften:", new_x="LMARGIN", new_y="NEXT")
     
+    col_width = 90
+    draw_signature_on_pdf(pdf, a.get('kunde_unterschrift'), "Unterschrift Kunde / Auftraggeber:")
+    draw_signature_on_pdf(pdf, a.get('mitarbeiter_unterschrift'), "Unterschrift Monteur / Einsatz-Team:")
+
     return pdf.output()
 
 def hat_recht(modul_id, aktion="sehen"):
@@ -121,9 +164,8 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_auftraege_verwaltung(supabase):
     st.title("📋 4. Auftrags- & Einsatzmanagement")
-    st.caption("Planen Sie Aufträge, steuern Sie den Status, weisen Sie Teams & Fahrzeuge zu und erfassen Sie Material.")
+    st.caption("Planen Sie Aufträge, steuern Sie den Status, weisen Sie Teams & Fahrzeuge zu und erfassen Sie Material inkl. digitaler Unterschriftenabnahme.")
 
-    # 1. Grundrecht "Sehen" prüfen
     if not hat_recht("4", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Auftragsmodul aufzurufen.")
         return
@@ -132,7 +174,6 @@ def render_auftraege_verwaltung(supabase):
     user_id = user_data.get("id")
     user_rolle = user_data.get("rolle", "")
     
-    # Administratoren-Status über feines Recht "erstellen" oder "bearbeiten" oder klassische Rolle
     is_admin = hat_recht("4", "erstellen") or hat_recht("4", "bearbeiten") or (user_rolle in ["Admin", "Büro", "Inhaber"])
 
     # Daten laden
@@ -178,7 +219,6 @@ def render_auftraege_verwaltung(supabase):
             pass
         verfuegbare_mitarbeiter.append(ma)
 
-    # Tabs dynamisch aufbauen basierend auf dem Recht "4_erstellen"
     tabs_optionen = ["📋 Auftragsübersicht"]
     darf_erstellen = hat_recht("4", "erstellen")
     if darf_erstellen:
@@ -188,7 +228,7 @@ def render_auftraege_verwaltung(supabase):
 
     # --- TAB 1: ÜBERSICHT ---
     with tabs[0]:
-        st.subheader("Auftragsliste")
+        st.subheader("Auftragsliste & Digitale Unterschriftenabnahme")
 
         sichtbare_auftraege = []
         for a in auftraege_liste:
@@ -293,7 +333,7 @@ def render_auftraege_verwaltung(supabase):
                             )
 
                         if darf_bearbeiten:
-                            b_save = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True)
+                            b_save = st.form_submit_button("💾 Änderungen & Material speichern", type="primary", use_container_width=True)
                             if b_save:
                                 try:
                                     update_payload = {
@@ -316,11 +356,81 @@ def render_auftraege_verwaltung(supabase):
                                 except Exception as e:
                                     st.error(f"Fehler: {e}")
 
-                    pdf_bytes = generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team)
+                    # --- DIGITALE UNTERSCHRIFTEN (AUCH FÜR MONTEURE / KUNDEN) ---
+                    st.markdown("---")
+                    st.write("✍️ **Digitale Unterschriften (Abnahmeprotokoll)**")
+                    
+                    col_sig1, col_sig2 = st.columns(2)
+                    
+                    with col_sig1:
+                        st.markdown("Unterschrift Kunde / Auftraggeber")
+                        canvas_kunde = st_canvas(
+                            fill_color="rgba(255, 165, 0, 0.3)",
+                            stroke_width=2,
+                            stroke_color="#000000",
+                            background_color="#FFFFFF",
+                            height=100,
+                            width=300,
+                            drawing_mode="freedraw",
+                            key=f"canvas_kunde_{a['id']}"
+                        )
+                        if st.button("💾 Kunde Unterschrift speichern", key=f"btn_save_kunde_{a['id']}"):
+                            if canvas_kunde.image_data is not None:
+                                img = Image.fromarray(canvas_kunde.image_data.astype('uint8'), 'RGBA')
+                                rgb_img = Image.new("RGB", img.size, (255, 255, 255))
+                                rgb_img.paste(img, mask=img.split()[3])
+                                buffered = BytesIO()
+                                rgb_img.save(buffered, format="PNG")
+                                sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
+                                
+                                try:
+                                    supabase.table("auftraege").update({"kunde_unterschrift": sig_base64}).eq("id", a["id"]).execute()
+                                    st.success("Kundenunterschrift erfolgreich gespeichert!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Fehler: {e}")
+
+                    with col_sig2:
+                        st.markdown("Unterschrift Monteur / Team")
+                        canvas_ma = st_canvas(
+                            fill_color="rgba(255, 165, 0, 0.3)",
+                            stroke_width=2,
+                            stroke_color="#000000",
+                            background_color="#FFFFFF",
+                            height=100,
+                            width=300,
+                            drawing_mode="freedraw",
+                            key=f"canvas_ma_{a['id']}"
+                        )
+                        if st.button("💾 Monteur Unterschrift speichern", key=f"btn_save_ma_{a['id']}"):
+                            if canvas_ma.image_data is not None:
+                                img = Image.fromarray(canvas_ma.image_data.astype('uint8'), 'RGBA')
+                                rgb_img = Image.new("RGB", img.size, (255, 255, 255))
+                                rgb_img.paste(img, mask=img.split()[3])
+                                buffered = BytesIO()
+                                rgb_img.save(buffered, format="PNG")
+                                sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
+                                
+                                try:
+                                    supabase.table("auftraege").update({"mitarbeiter_unterschrift": sig_base64}).eq("id", a["id"]).execute()
+                                    st.success("Monteurunterschrift erfolgreich gespeichert!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Fehler: {e}")
+
+                    st.markdown("---")
+                    # Frische Daten für das PDF abrufen (inkl. gespeicherter Signaturen)
+                    try:
+                        fresh_res = supabase.table("auftraege").select("*").eq("id", a["id"]).execute()
+                        current_a = fresh_res.data[0] if fresh_res.data else a
+                    except Exception:
+                        current_a = a
+
+                    pdf_bytes = generate_auftrag_pdf(current_a, kunde, gebaeude, fahrzeug, team)
                     st.download_button(
-                        label=f"📥 Auftrags-PDF herunterladen / Drucken ({a.get('auftragsnummer')})",
+                        label=f"📥 Abnahmeprotokoll-PDF mit Unterschriften herunterladen ({a.get('auftragsnummer')})",
                         data=bytes(pdf_bytes),
-                        file_name=f"Auftrag_{a.get('auftragsnummer')}.pdf",
+                        file_name=f"Abnahmeprotokoll_{a.get('auftragsnummer')}.pdf",
                         mime="application/pdf",
                         key=f"dl_{a['id']}"
                     )

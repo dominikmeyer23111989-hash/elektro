@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import datetime
 
 def hat_recht(modul_id, aktion="sehen"):
-    """Prüft über die app.py-Logik, ob das Recht vorliegt."""
     user = st.session_state.get("user_data", {})
     if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
         return True
@@ -20,7 +19,6 @@ def render_lager_verwaltung(supabase):
 
     darf_bearbeiten = hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
 
-    # Daten aus Supabase laden
     try:
         m_res = supabase.table("lager_material").select("*").order("bezeichnung").execute()
         material_liste = m_res.data or []
@@ -138,13 +136,13 @@ def render_lager_verwaltung(supabase):
 
     # --- TAB 3: KAMERA & FOTO-ERFASSUNG ---
     with tabs[2]:
-        st.subheader("📷 Mobile Kamera & Foto-Dokumentation")
-        st.caption("Machen Sie mit Ihrem Smartphone direkt ein Foto vom Material oder Typenschild, um es im Lager zu dokumentieren.")
+        st.subheader("📷 Mobile Kamera & Foto-Referenz")
+        st.caption("Machen Sie ein Foto vom Artikel oder Karton, um es als optische Vorlage beim Eintragen zu nutzen.")
 
         foto = st.camera_input("Foto aufnehmen")
         if foto:
             st.image(foto, caption="Aufgenommenes Materialfoto", width=350)
-            st.success("✅ Foto erfolgreich aufgenommen und im Arbeitsspeicher hinterlegt.")
+            st.info("💡 **Nächster Schritt:** Nutzen Sie die Details auf diesem Foto, um direkt in den Reiter **'➕ Artikel anlegen'** zu wechseln und den Artikel einzutragen.")
 
     # --- TAB 4: CSV-MASSENIMPORT ---
     with tabs[3]:

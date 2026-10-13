@@ -14,14 +14,30 @@ def format_de_zeit(iso_string):
     except Exception:
         return str(iso_string)[:16]
 
+def hat_recht(modul_id, aktion="sehen"):
+    """Prüft über die app.py-Logik, ob das Recht vorliegt."""
+    user = st.session_state.get("user_data", {})
+    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+        return True
+    rechte = user.get("rechte", [])
+    return f"{modul_id}_{aktion}" in rechte
+
 def render_tv_dashboard(supabase):
     # Prüfen, ob wir uns im reinen TV-Modus (?view=tv) befinden
     is_tv_mode = st.query_params.get("view") == "tv"
 
-    # Wenn wir im normalen Portal-Modus sind (nicht TV): Konfiguration & Link-Anzeige
+    # Im normalen Portal-Modus prüfen wir das Recht "9_sehen"
     if not is_tv_mode:
+        if not hat_recht("9", "sehen"):
+            st.error("⛔ Sie haben keine Berechtigung, das TV-Leitsystem aufzurufen.")
+            return
+
         st.title("🖥️ TV- & Monitor-Leitsystem (Dashboard)")
         st.caption("Konfigurieren Sie hier die Ansicht für Ihren zweiten Monitor oder den Werkstatt-Fernseher.")
+
+        darf_bearbeiten = hat_recht("9", "bearbeiten")
+        if not darf_bearbeiten:
+            st.info("ℹ️ Ihr Account hat nur Leserechte für dieses Modul. Die Einstellungen können nur von Administratoren geändert werden.")
 
         # Konfiguration im Hauptbereich statt Sidebar
         with st.expander("⚙️ Dashboard-Einstellungen anpassen", expanded=True):
@@ -31,14 +47,15 @@ def render_tv_dashboard(supabase):
                     "Anzuzeigende Auftrags-Status",
                     options=["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"],
                     default=["Offener Auftrag", "In Bearbeitung"],
-                    key="cfg_status"
+                    key="cfg_status",
+                    disabled=not darf_bearbeiten
                 )
-                refresh_sec = st.slider("Aktualisierungs-Intervall (Sekunden)", min_value=10, max_value=120, value=30, step=5, key="cfg_refresh")
+                refresh_sec = st.slider("Aktualisierungs-Intervall (Sekunden)", min_value=10, max_value=120, value=30, step=5, key="cfg_refresh", disabled=not darf_bearbeiten)
             
             with col_e2:
-                show_fz = st.checkbox("🚐 Zugewiesenes Fahrzeug anzeigen", value=True, key="cfg_fz")
-                show_tm = st.checkbox("👷 Einsatz-Team anzeigen", value=True, key="cfg_tm")
-                show_arb = st.checkbox("⚡ Auszuführende Arbeiten anzeigen", value=True, key="cfg_arb")
+                show_fz = st.checkbox("🚐 Zugewiesenes Fahrzeug anzeigen", value=True, key="cfg_fz", disabled=not darf_bearbeiten)
+                show_tm = st.checkbox("👷 Einsatz-Team anzeigen", value=True, key="cfg_tm", disabled=not darf_bearbeiten)
+                show_arb = st.checkbox("⚡ Auszuführende Arbeiten anzeigen", value=True, key="cfg_arb", disabled=not darf_bearbeiten)
 
         # Konfiguration in Session State speichern, damit das Dashboard darauf zugreifen kann
         st.session_state["tv_config"] = {
@@ -52,12 +69,10 @@ def render_tv_dashboard(supabase):
         st.markdown("---")
         st.subheader("📺 Schnellstart für externe Bildschirme")
         
-        # Aktuelle URL ermitteln (Fallback auf Standard, falls Streamlit Cloud URL)
         current_url = "https://elektro-kmcdkbpue9vbok3q4vnurj.streamlit.app/?view=tv"
         
         st.info(f"💡 **Merkhilfe für den Fernseher:** Tippen Sie im Browser Ihres Smart-TVs oder des zweiten Geräts folgende Adresse ein:\n\n`{current_url}`")
 
-        # Button zum Öffnen in einem neuen Fenster für den zweiten Monitor am PC
         tv_url_path = "/?view=tv"
         components.html(f"""
             <div style="margin-top: 10px;">

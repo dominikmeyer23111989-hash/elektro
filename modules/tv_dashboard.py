@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -14,41 +15,71 @@ def format_de_zeit(iso_string):
         return str(iso_string)[:16]
 
 def render_tv_dashboard(supabase):
-    # Session State für TV-Einstellungen initialisieren, falls nicht vorhanden
-    if "tv_config" not in st.session_state:
+    # Prüfen, ob wir uns im reinen TV-Modus (?view=tv) befinden
+    is_tv_mode = st.query_params.get("view") == "tv"
+
+    # Wenn wir im normalen Portal-Modus sind (nicht TV): Konfiguration & Link-Anzeige
+    if not is_tv_mode:
+        st.title("🖥️ TV- & Monitor-Leitsystem (Dashboard)")
+        st.caption("Konfigurieren Sie hier die Ansicht für Ihren zweiten Monitor oder den Werkstatt-Fernseher.")
+
+        # Konfiguration im Hauptbereich statt Sidebar
+        with st.expander("⚙️ Dashboard-Einstellungen anpassen", expanded=True):
+            col_e1, col_e2 = st.columns(2)
+            with col_e1:
+                selected_statuses = st.multiselect(
+                    "Anzuzeigende Auftrags-Status",
+                    options=["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"],
+                    default=["Offener Auftrag", "In Bearbeitung"],
+                    key="cfg_status"
+                )
+                refresh_sec = st.slider("Aktualisierungs-Intervall (Sekunden)", min_value=10, max_value=120, value=30, step=5, key="cfg_refresh")
+            
+            with col_e2:
+                show_fz = st.checkbox("🚐 Zugewiesenes Fahrzeug anzeigen", value=True, key="cfg_fz")
+                show_tm = st.checkbox("👷 Einsatz-Team anzeigen", value=True, key="cfg_tm")
+                show_arb = st.checkbox("⚡ Auszuführende Arbeiten anzeigen", value=True, key="cfg_arb")
+
+        # Konfiguration in Session State speichern, damit das Dashboard darauf zugreifen kann
         st.session_state["tv_config"] = {
-            "status_filter": ["Offener Auftrag", "In Bearbeitung"],
-            "show_fahrzeug": True,
-            "show_team": True,
-            "show_arbeiten": True,
-            "refresh_sekunden": 30
+            "status_filter": selected_statuses,
+            "show_fahrzeug": show_fz,
+            "show_team": show_tm,
+            "show_arbeiten": show_arb,
+            "refresh_sekunden": refresh_sec
         }
 
-    cfg = st.session_state["tv_config"]
+        st.markdown("---")
+        st.subheader("📺 Schnellstart für externe Bildschirme")
+        
+        # Aktuelle URL ermitteln (Fallback auf Standard, falls Streamlit Cloud URL)
+        current_url = "https://elektro-kmcdkbpue9vbok3q4vnurj.streamlit.app/?view=tv"
+        
+        st.info(f"💡 **Merkhilfe für den Fernseher:** Tippen Sie im Browser Ihres Smart-TVs oder des zweiten Geräts folgende Adresse ein:\n\n`{current_url}`")
 
-    # Sidebar oder Popover für Einstellungen auf dem TV-Bildschirm
-    with st.sidebar:
-        st.markdown("### ⚙️ TV-Dashboard Konfiguration")
-        st.caption("Passen Sie hier individuell an, was auf dem Monitor / Fernseher angezeigt werden soll.")
-        
-        selected_statuses = st.multiselect(
-            "Anzuzeigende Auftrags-Status",
-            options=["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"],
-            default=cfg["status_filter"]
-        )
-        
-        cfg["show_fahrzeug"] = st.checkbox("🚐 Zugewiesenes Fahrzeug anzeigen", value=cfg["show_fahrzeug"])
-        cfg["show_team"] = st.checkbox("👷 Einsatz-Team (Monteure) anzeigen", value=cfg["show_team"])
-        cfg["show_arbeiten"] = st.checkbox("⚡ Auszuführende Arbeiten anzeigen", value=cfg["show_arbeiten"])
-        
-        cfg["refresh_sekunden"] = st.slider("Aktualisierungs-Intervall (Sekunden)", min_value=10, max_value=120, value=cfg["refresh_sekunden"], step=5)
-        
-        if st.button("💾 Einstellungen übernehmen", type="primary", use_container_width=True):
-            st.session_state["tv_config"] = cfg
-            st.success("TV-Konfiguration aktualisiert!")
-            st.rerun()
+        # Button zum Öffnen in einem neuen Fenster für den zweiten Monitor am PC
+        tv_url_path = "/?view=tv"
+        components.html(f"""
+            <div style="margin-top: 10px;">
+                <a href="{tv_url_path}" target="_blank" style="background-color: #FF4B4B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; font-family: sans-serif; display: inline-block; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+                    🖥️ Dashboard in neuem Fenster öffnen (für 2. Monitor)
+                </a>
+            </div>
+        """, height=60)
 
-    # Dynamisches Fragment mit der eingestellten Aktualisierungszeit
+        st.markdown("### 👀 Live-Vorschau (Aktuelle Ansicht)")
+        st.markdown("---")
+
+    # Konfiguration laden (mit Standardwerten falls direkt aufgerufen)
+    cfg = st.session_state.get("tv_config", {
+        "status_filter": ["Offener Auftrag", "In Bearbeitung"],
+        "show_fahrzeug": True,
+        "show_team": True,
+        "show_arbeiten": True,
+        "refresh_sekunden": 30
+    })
+
+    # Das eigentliche Live-Leitsystem (läuft im TV-Modus oder als Vorschau im Portal)
     @st.fragment(run_every=cfg["refresh_sekunden"])
     def render_live_content():
         st.markdown("""
@@ -66,14 +97,16 @@ def render_tv_dashboard(supabase):
             </style>
         """, unsafe_allow_html=True)
 
-        st.markdown('<div class="tv-header">⚡ ELEKTRO-ENTERPRISE — Live-Leitsystem</div>', unsafe_allow_html=True)
+        if is_tv_mode:
+            st.markdown('<div class="tv-header">⚡ ELEKTRO-ENTERPRISE — Live-Leitsystem</div>', unsafe_allow_html=True)
         
         current_time = datetime.now(ZoneInfo("Europe/Berlin")).strftime('%d.%m.%Y, %H:%M:%S Uhr')
-        st.markdown(f'<div class="tv-sub">Individuelle Einsatzübersicht | Letzte Aktualisierung: {current_time} (Auto-Refresh alle {cfg["refresh_sekunden"]} Sek.)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="tv-sub">Einsatzübersicht | Letzte Aktualisierung: {current_time} (Auto-Refresh alle {cfg["refresh_sekunden"]} Sek.)</div>', unsafe_allow_html=True)
         st.markdown("---")
 
+        selected_statuses = cfg["status_filter"]
         if not selected_statuses:
-            st.warning("Bitte wählen Sie in der linken Sidebar mindestens einen Status aus, der angezeigt werden soll.")
+            st.warning("Keine Status-Filter ausgewählt.")
             return
 
         try:
@@ -84,7 +117,7 @@ def render_tv_dashboard(supabase):
             auftraege = []
 
         if not auftraege:
-            st.markdown("<h2 style='text-align: center; color: #808080; margin-top: 50px;'>🎉 Keine Aufträge mit den gewählten Filtern vorhanden.</h2>", unsafe_allow_html=True)
+            st.markdown("<h2 style='text-align: center; color: #808080; margin-top: 50px;'>🎉 Aktuell sind keine Aufträge mit diesen Filtern vorhanden.</h2>", unsafe_allow_html=True)
             return
 
         col1, col2 = st.columns(2)
@@ -120,7 +153,6 @@ def render_tv_dashboard(supabase):
                 card_class = "order-card"
                 badge = '<span class="badge-offen">🔴 Offener Auftrag</span>'
 
-            # Dynamische HTML-Bausteine basierend auf den individuellen Einstellungen
             arbeiten_html = f'<div class="order-detail"><b>⚡ Arbeiten:</b> {a.get("arbeiten")}</div>' if cfg["show_arbeiten"] else ""
             team_html = f'<div class="order-detail"><b>👷 Team:</b> {team_names}</div>' if cfg["show_team"] else ""
             fahrzeug_html = f'<div class="order-detail"><b>🚐 Fahrzeug:</b> {f_info}</div>' if cfg["show_fahrzeug"] else ""

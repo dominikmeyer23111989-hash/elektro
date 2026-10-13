@@ -198,9 +198,23 @@ def berechne_monatsdaten_fuer_ma(supabase, ma, monat_auswahl, jahr_auswahl):
         "soll": gesamt_soll
     }
 
+def hat_recht(modul_id, aktion="sehen"):
+    """Prüft über die app.py-Logik, ob das Recht vorliegt."""
+    user = st.session_state.get("user_data", {})
+    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+        return True
+    rechte = user.get("rechte", [])
+    return f"{modul_id}_{aktion}" in rechte
+
 def render_steuerberater_export(supabase):
     st.title("📊 Monatsabrechnung & Steuerberater-Export")
     st.caption("Erstellen Sie monatliche Stempel- und Anwesenheitslisten – wahlweise für einzelne Mitarbeiter oder als **Gesamt-PDF für den gesamten Betrieb**.")
+
+    if not hat_recht("10", "sehen"):
+        st.error("⛔ Sie haben keine Berechtigung, das Steuerberater-Export-Modul aufzurufen.")
+        return
+
+    darf_exportieren = hat_recht("10", "exportieren")
 
     try:
         ma_res = supabase.table("mitarbeiter").select("id, vorname, nachname, mitarbeiternummer, soll_mo, soll_di, soll_mi, soll_do, soll_fr").eq("ist_aktiv", True).order("mitarbeiternummer").execute()
@@ -220,32 +234,36 @@ def render_steuerberater_export(supabase):
 
     st.markdown("---")
 
+    if not darf_exportieren:
+        st.info("ℹ️ Ihr Account hat nur Leserechte für diesen Bereich. PDF-Exporte sind für Sie deaktiviert.")
+
     # --- HAUPTAKTION: GESAMTABRECHNUNG FÜR ALLE MITARBEITER ---
     st.subheader("🏢 Betriebs-Gesamtexport (Alle Mitarbeiter)")
     st.info(f"💡 Generiert eine einzige PDF-Datei mit den lückenlosen Monatszeiten aller **{len(mitarbeiter_liste)} aktiven Mitarbeiter** für {calendar.month_name[monat_auswahl]} {jahr_auswahl}.")
 
-    if st.button("🚀 Gesamt-PDF für alle Mitarbeiter generieren", type="primary", use_container_width=True):
-        with st.spinner("Berechne Zeiten und erstelle Gesamt-PDF..."):
-            alle_daten = []
-            for ma in mitarbeiter_liste:
-                ma_daten = berechne_monatsdaten_fuer_ma(supabase, ma, monat_auswahl, jahr_auswahl)
-                alle_daten.append(ma_daten)
+    if darf_exportieren:
+        if st.button("🚀 Gesamt-PDF für alle Mitarbeiter generieren", type="primary", use_container_width=True):
+            with st.spinner("Berechne Zeiten und erstelle Gesamt-PDF..."):
+                alle_daten = []
+                for ma in mitarbeiter_liste:
+                    ma_daten = berechne_monatsdaten_fuer_ma(supabase, ma, monat_auswahl, jahr_auswahl)
+                    alle_daten.append(ma_daten)
 
-            pdf_bytes_gesamt = generate_steuerberater_pdf_multi(
-                mitarbeiter_daten_liste=alle_daten,
-                monat_str=calendar.month_name[monat_auswahl],
-                jahr_str=str(jahr_auswahl)
-            )
+                pdf_bytes_gesamt = generate_steuerberater_pdf_multi(
+                    mitarbeiter_daten_liste=alle_daten,
+                    monat_str=calendar.month_name[monat_auswahl],
+                    jahr_str=str(jahr_auswahl)
+                )
 
-            st.success("✅ Gesamt-PDF erfolgreich erstellt!")
-            st.download_button(
-                label=f"📥 Gesamte Betriebs-Lohnliste ({calendar.month_name[monat_auswahl]} {jahr_auswahl}) herunterladen (PDF)",
-                data=bytes(pdf_bytes_gesamt),
-                file_name=f"Steuerberater_Gesamtliste_Betrieb_{monat_auswahl}_{jahr_auswahl}.pdf",
-                mime="application/pdf",
-                type="primary",
-                use_container_width=True
-            )
+                st.success("✅ Gesamt-PDF erfolgreich erstellt!")
+                st.download_button(
+                    label=f"📥 Gesamte Betriebs-Lohnliste ({calendar.month_name[monat_auswahl]} {jahr_auswahl}) herunterladen (PDF)",
+                    data=bytes(pdf_bytes_gesamt),
+                    file_name=f"Steuerberater_Gesamtliste_Betrieb_{monat_auswahl}_{jahr_auswahl}.pdf",
+                    mime="application/pdf",
+                    type="primary",
+                    use_container_width=True
+                )
 
     st.markdown("---")
     st.subheader("🔍 Alternativ: Einzelansicht & Einzelauswahl")
@@ -266,16 +284,17 @@ def render_steuerberater_export(supabase):
 
     st.dataframe(pd.DataFrame(einzel_daten["tage"]), use_container_width=True)
 
-    pdf_bytes_einzel = generate_steuerberater_pdf_multi(
-        mitarbeiter_daten_liste=[einzel_daten],
-        monat_str=calendar.month_name[monat_auswahl],
-        jahr_str=str(jahr_auswahl)
-    )
+    if darf_exportieren:
+        pdf_bytes_einzel = generate_steuerberater_pdf_multi(
+            mitarbeiter_daten_liste=[einzel_daten],
+            monat_str=calendar.month_name[monat_auswahl],
+            jahr_str=str(jahr_auswahl)
+        )
 
-    st.download_button(
-        label=f"📥 Einzel-PDF für {sel_ma['vorname']} {sel_ma['nachname']} herunterladen",
-        data=bytes(pdf_bytes_einzel),
-        file_name=f"Steuerberater_Zeiten_{sel_ma['mitarbeiternummer']}_{monat_auswahl}_{jahr_auswahl}.pdf",
-        mime="application/pdf",
-        use_container_width=True
-    )
+        st.download_button(
+            label=f"📥 Einzel-PDF für {sel_ma['vorname']} {sel_ma['nachname']} herunterladen",
+            data=bytes(pdf_bytes_einzel),
+            file_name=f"Steuerberater_Zeiten_{sel_ma['mitarbeiternummer']}_{monat_auswahl}_{jahr_auswahl}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )

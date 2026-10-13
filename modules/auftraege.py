@@ -27,7 +27,6 @@ def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
     pdf.add_page()
     pdf.set_font('Helvetica', '', 11)
 
-    # Kopfdaten
     pdf.set_font('Helvetica', 'B', 12)
     pdf.cell(0, 6, clean_text(f"Auftragsnummer: {a.get('auftragsnummer')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
@@ -35,13 +34,11 @@ def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
     status_str = a.get('status', 'Offen')
     pdf.cell(0, 6, clean_text(f"Status: {status_str}"), new_x="LMARGIN", new_y="NEXT")
     
-    # Termin-Formatierung
     t_um = str(a.get('termin_um', ''))[:16].replace('T', ' ')
     t_bis = str(a.get('termin_bis', ''))[:16].replace('T', ' ')
     pdf.cell(0, 6, clean_text(f"Einsatztermin: Von {t_um} bis {t_bis} Uhr"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
-    # Auftraggeber & Objekt
     pdf.set_font('Helvetica', 'B', 11)
     pdf.cell(0, 6, "Auftraggeber & Objektanschrift:", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
@@ -63,14 +60,12 @@ def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
     pdf.cell(0, 6, clean_text(f"Zuständiger Monteur: {m_name}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
-    # Auszuführende Arbeiten
     pdf.set_font('Helvetica', 'B', 11)
     pdf.cell(0, 6, "Auszuführende Arbeiten / Leistungsbeschreibung:", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
     pdf.multi_cell(0, 5, clean_text(a.get('arbeiten', '-')))
     pdf.ln(4)
 
-    # Benötigtes Material
     pdf.set_font('Helvetica', 'B', 11)
     pdf.cell(0, 6, "Verbrauchtes / Benötigtes Material:", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
@@ -87,7 +82,6 @@ def render_auftraege_verwaltung(supabase):
     user_rolle = user_data.get("rolle", "")
     is_admin = user_rolle in ["Admin", "Büro", "Inhaber"]
 
-    # Daten laden
     try:
         a_res = supabase.table("auftraege").select("*, kunden(*), gebaeude(*), mitarbeiter(id, vorname, nachname)").order("erstellt_am", desc=True).execute()
         auftraege_liste = a_res.data or []
@@ -112,20 +106,16 @@ def render_auftraege_verwaltung(supabase):
     except Exception:
         mitarbeiter_liste = []
 
-    # Prüfen, ob Monteur aktuell krank oder im Urlaub ist
-    # Wir prüfen hier die Abwesenheiten aus der Mitarbeiter-Tabelle oder einer Abwesenheits-Tabelle falls vorhanden.
-    # Als robuster Check filtern wir Mitarbeiter, die in Zeiterfassung/Abwesenheit blockiert sind oder setzen Standard-Logik voraus.
     verfuegbare_mitarbeiter = []
     heute_str = datetime.now().strftime("%Y-%m-%d")
 
     for ma in mitarbeiter_liste:
-        # Prüfen ob Urlaub/Krank in der Abwesenheitstabelle hinterlegt ist (falls vorhanden)
         try:
             abw_res = supabase.table("mitarbeiter_abwesenheit").select("*").eq("mitarbeiter_id", ma["id"]).lte("von_datum", heute_str).gte("bis_datum", heute_str).execute()
             if abw_res.data:
-                continue # Ist abwesend (Urlaub/Krank)
+                continue
         except Exception:
-            pass # Tabelle existiert evtl. noch nicht, ignorieren
+            pass
         verfuegbare_mitarbeiter.append(ma)
 
     tabs_optionen = ["📋 Auftragsübersicht"]
@@ -134,12 +124,10 @@ def render_auftraege_verwaltung(supabase):
 
     tabs = st.tabs(tabs_optionen)
 
-    # --- TAB 1: ÜBERSICHT ---
     with tabs[0]:
         st.subheader("Auftragsliste")
 
-        # Wenn kein Admin, nur dem zugewiesenen Monteur anzeigen
-         sichtbare_auftraege = auftraege_liste
+        sichtbare_auftraege = auftraege_liste
         if not is_admin:
             sichtbare_auftraege = [a for a in auftraege_liste if a.get("mitarbeiter_id") == user_id]
 
@@ -174,7 +162,6 @@ def render_auftraege_verwaltung(supabase):
                         neuer_status = st.selectbox("Status", ["Offen", "In Bearbeitung", "Abgeschlossen"], index=["Offen", "In Bearbeitung", "Abgeschlossen"].index(a.get("status", "Offen")))
                         verbrauchtes_material = st.text_area("Benötigtes / Verbrautes Material eintragen", value=a.get("benoetigtes_material") or "")
                         
-                        # Admin kann auch Monteur ändern
                         neuer_monteur = None
                         if is_admin:
                             neuer_monteur = st.selectbox(
@@ -201,7 +188,6 @@ def render_auftraege_verwaltung(supabase):
                             except Exception as e:
                                 st.error(f"Fehler: {e}")
 
-                    # PDF Download
                     pdf_bytes = generate_auftrag_pdf(a, kunde, gebaeude, monteur)
                     st.download_button(
                         label=f"📥 Auftrags-PDF herunterladen / Drucken ({a.get('auftragsnummer')})",
@@ -211,7 +197,6 @@ def render_auftraege_verwaltung(supabase):
                         key=f"dl_{a['id']}"
                     )
 
-    # --- TAB 2: NEUEN AUFTRAG ANLEGEN (Nur Admin/Büro) ---
     if is_admin and len(tabs) > 1:
         with tabs[1]:
             st.subheader("Neuen Auftrag erstellen")
@@ -252,7 +237,7 @@ def render_auftraege_verwaltung(supabase):
                             n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.strptime("08:00", "%H:%M").time())
                             n_uhr_bis = st.time_input("Uhrzeit Bis", value=datetime.strptime("16:00", "%H:%M").time())
 
-                    n_arbeiten = st.text_area("Auszuführende Arbeiten *", placeholder="z.B. Zählerschrank umbauen, Wallbox anschließen, Messung nach VDE 0100...")
+                    n_arbeiten = st.text_area("Auszuführende Arbeiten *", placeholder="z.B. Zählerschrank umbauen, Wallbox anschließen...")
                     n_material = st.text_area("Benötigtes Material (Vorbereitung)", placeholder="z.B. 1x FI-Schalter, 15m NYM-J 3x1.5...")
 
                     if st.form_submit_button("Auftrag anlegen & zuweisen", type="primary", use_container_width=True):

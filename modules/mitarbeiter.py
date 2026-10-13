@@ -5,16 +5,18 @@ from fpdf import FPDF
 from io import BytesIO
 from PIL import Image
 
+# Alle Module und ihre feinen Aktionen (Sehen, Erstellen, Bearbeiten, Löschen)
 ALL_MODULES = {
-    "1": "1. Mitarbeiterverwaltung",
-    "2": "2. Lagerverwaltung",
-    "3": "3. Zeiterfassung",
-    "4": "4. Aufträge",
-    "5": "5. Kunden",
-    "6": "6. Fahrzeuge",
-    "7": "7. Gebäude",
-    "8": "8. Dokumente",
-    "9": "9. Finanzen / Monitor"
+    "1": ("1. Mitarbeiterverwaltung", ["sehen", "erstellen", "bearbeiten", "loeschen"]),
+    "2": ("2. Lagerverwaltung", ["sehen", "erstellen", "bearbeiten", "loeschen"]),
+    "3": ("3. Zeiterfassung", ["sehen", "erstellen", "bearbeiten", "loeschen"]),
+    "4": ("4. Aufträge & Einsätze", ["sehen", "erstellen", "bearbeiten", "loeschen"]),
+    "5": ("5. Kundenverwaltung", ["sehen", "erstellen", "bearbeiten", "loeschen"]),
+    "6": ("6. Fahrzeugflotte", ["sehen", "erstellen", "bearbeiten", "loeschen"]),
+    "7": ("7. Gebäude", ["sehen", "erstellen", "bearbeiten", "loeschen"]),
+    "8": ("8. Dokumente", ["sehen", "erstellen", "loeschen"]),
+    "9": ("9. TV-Leitsystem", ["sehen", "bearbeiten"]),
+    "10": ("10. Steuerberater-Export", ["sehen", "exportieren"])
 }
 
 def compress_image(uploaded_file, max_width=1200, quality=75):
@@ -125,7 +127,7 @@ def render_mitarbeiter_verwaltung(supabase):
     tab_uebersicht, tab_neu, tab_rollen, tab_urlaub, tab_qualifikationen = st.tabs([
         "📋 Personalstamm & Status", 
         "➕ Neuer Mitarbeiter", 
-        "🔑 Rollen & Rechte", 
+        "🔑 Rollen & feine Rechte", 
         "🏖️ Urlaub & Anträge",
         "📜 Qualifikationen"
     ])
@@ -283,32 +285,40 @@ def render_mitarbeiter_verwaltung(supabase):
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
-    # --- TAB 3: Rollen & Rechte ---
+    # --- TAB 3: Rollen & Feine Rechte (CRUD) ---
     with tab_rollen:
-        st.subheader("🔑 Rollen, Rechte & Genehmigungen")
+        st.subheader("🔑 Feingranulares Rollen- & Rechtssystem")
+        st.caption("Legen Sie fest, welche Rolle welche Module sehen, erstellen, bearbeiten oder löschen darf.")
+
         try:
             rollen_data = supabase.table("rollen").select("*").execute().data or []
         except Exception:
             rollen_data = []
 
-        with st.expander("➕ Neue Rolle erstellen"):
-            with st.form("neue_rolle"):
-                r_bez = st.text_input("Rollenbezeichnung *")
+        with st.expander("➕ Neue Rolle mit feinen Rechten erstellen"):
+            with st.form("neue_rolle_crud"):
+                r_bez = st.text_input("Rollenbezeichnung *", placeholder="z. B. Monteur (eingeschränkt)")
                 r_darf_antraege = st.checkbox("Darf Urlaubs- und Abwesenheitsanträge prüfen & genehmigen")
                 
-                st.markdown("**Erlaubte Menü-Module für diese Rolle:**")
-                r_sel = []
-                col_r1, col_r2 = st.columns(2)
-                for idx, (m_k, m_t) in enumerate(ALL_MODULES.items()):
-                    if (col_r1 if idx < 5 else col_r2).checkbox(m_t, key=f"r_m_{m_k}"):
-                        r_sel.append(m_k)
-                        
-                if st.form_submit_button("Rolle speichern", type="primary"):
+                st.markdown("---")
+                st.markdown("**Feine Berechtigungen (Sehen, Erstellen, Bearbeiten, Löschen):**")
+                
+                new_rechte_liste = []
+                for mod_id, (mod_titel, aktionen) in ALL_MODULES.items():
+                    st.markdown(f"**{mod_titel}**")
+                    cols = st.columns(len(aktionen))
+                    for idx, akt in enumerate(aktionen):
+                        recht_key = f"{mod_id}_{akt}"
+                        if cols[idx].checkbox(f"{akt.capitalize()}", key=f"new_r_{mod_id}_{akt}"):
+                            new_rechte_liste.append(recht_key)
+                    st.markdown("")
+
+                if st.form_submit_button("Rolle anlegen", type="primary", use_container_width=True):
                     if r_bez:
                         try:
                             supabase.table("rollen").insert({
                                 "bezeichnung": r_bez, 
-                                "erlaubte_menues": r_sel,
+                                "erlaubte_menues": new_rechte_liste, # Speichert Keys wie "4_sehen", "4_bearbeiten"
                                 "darf_antraege_pruefen": r_darf_antraege
                             }).execute()
                             st.success(f"Rolle '{r_bez}' erfolgreich erstellt!")
@@ -318,35 +328,41 @@ def render_mitarbeiter_verwaltung(supabase):
 
         if rollen_data:
             st.markdown("---")
-            sel_r = st.selectbox("Rolle auswählen zum Bearbeiten oder Löschen", [r["bezeichnung"] for r in rollen_data])
+            sel_r = st.selectbox("Rolle auswählen zum Anpassen der feinen Rechte", [r["bezeichnung"] for r in rollen_data])
             r_obj = next((r for r in rollen_data if r["bezeichnung"] == sel_r), None)
             
             if r_obj:
-                with st.form(f"edit_rolle_form_{r_obj['id']}"):
-                    st.markdown(f"#### Rechte bearbeiten für: **{r_obj['bezeichnung']}**")
+                with st.form(f"edit_rolle_crud_{r_obj['id']}"):
+                    st.markdown(f"#### Rechte feinjustieren für: **{r_obj['bezeichnung']}**")
                     
                     cur_darf = bool(r_obj.get("darf_antraege_pruefen", False))
                     new_darf = st.checkbox("Darf Urlaubs- und Abwesenheitsanträge prüfen & genehmigen", value=cur_darf)
                     
                     st.markdown("---")
-                    st.markdown("**Modul-Berechtigungen:**")
+                    st.markdown("**Modul-Aktionen (CRUD):**")
                     cur_m = r_obj.get("erlaubte_menues", [])
-                    new_m = []
-                    col_a, col_b = st.columns(2)
-                    for idx, (mod_key, mod_title) in enumerate(ALL_MODULES.items()):
-                        if (col_a if idx < 5 else col_b).checkbox(mod_title, value=(mod_key in cur_m), key=f"edit_r_{r_obj['id']}_{mod_key}"):
-                            new_m.append(mod_key)
-                            
+                    updated_rechte_liste = []
+
+                    for mod_id, (mod_titel, aktionen) in ALL_MODULES.items():
+                        st.markdown(f"**{mod_titel}**")
+                        cols = st.columns(len(aktionen))
+                        for idx, akt in enumerate(aktionen):
+                            recht_key = f"{mod_id}_{akt}"
+                            is_checked = recht_key in cur_m
+                            if cols[idx].checkbox(f"{akt.capitalize()}", value=is_checked, key=f"edit_rc_{r_obj['id']}_{mod_id}_{akt}"):
+                                updated_rechte_liste.append(recht_key)
+                        st.markdown("")
+                        
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:
-                        btn_update = st.form_submit_button("💾 Rechte aktualisieren", type="primary", use_container_width=True)
+                        btn_update = st.form_submit_button("💾 Feine Rechte aktualisieren", type="primary", use_container_width=True)
                     with col_b2:
                         btn_delete = st.form_submit_button("🗑️ Rolle löschen", use_container_width=True)
 
                     if btn_update:
                         try:
                             supabase.table("rollen").update({
-                                "erlaubte_menues": new_m,
+                                "erlaubte_menues": updated_rechte_liste,
                                 "darf_antraege_pruefen": new_darf
                             }).eq("id", r_obj["id"]).execute()
                             st.success("Rechte erfolgreich aktualisiert!")
@@ -369,7 +385,7 @@ def render_mitarbeiter_verwaltung(supabase):
     # --- TAB 4: Urlaub & Anträge ---
     with tab_urlaub:
         st.subheader("🏖️ Urlaubs- & Abwesenheitsanträge")
-
+        # (Bleibt wie in Ihrer Version erhalten)
         try:
             all_antraege_res = supabase.table("antraege").select("*, mitarbeiter(vorname, nachname, mitarbeiternummer)").execute()
             all_antraege = all_antraege_res.data or []

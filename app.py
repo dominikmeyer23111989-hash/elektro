@@ -8,6 +8,7 @@ from modules.steuerberater import render_steuerberater_export
 from modules.kunden import render_kunden_verwaltung
 from modules.fahrzeuge import render_fahrzeug_verwaltung, render_fahrzeug_warnungen_sidebar
 from modules.gebaeude import render_gebaeude_verwaltung
+from modules.auftraege import render_auftraege_verwaltung
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
@@ -319,12 +320,13 @@ def render_app():
                 except Exception as e:
                     st.error(f"Fehler: {e}")
 
-    # --- 2. Hauptmenü / Modulauswahl (Direkt darunter, damit es hoch sitzt) ---
+    # --- 2. Hauptmenü / Modulauswahl ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### 📂 Hauptmenü")
 
     extended_modules = {
         **ALL_MODULES, 
+        "4": "4. Aufträge & Einsätze",
         "6": "6. Fahrzeugflotte & Mängel", 
         "7": "7. Gebäude & Liegenschaften", 
         "10": "10. Steuerberater-Export"
@@ -360,33 +362,4 @@ def render_app():
         st.rerun()
 
     # --- Routing im Hauptbereich ---
-    if st.session_state.get("show_profil", False):
-        if st.button("⬅️ Zurück zum Hauptmenü"):
-            st.session_state["show_profil"] = False
-            st.rerun()
-        render_mein_profil(supabase)
-    else:
-        if selected_main:
-            if selected_main == "1":
-                render_mitarbeiter_verwaltung(supabase)
-            elif selected_main == "3":
-                render_zeiterfassung(supabase)
-            elif selected_main == "5":
-                render_kunden_verwaltung(supabase)
-            elif selected_main == "6":
-                render_fahrzeug_verwaltung(supabase)
-            elif selected_main == "7":
-                render_gebaeude_verwaltung(supabase)
-            elif selected_main == "10":
-                render_steuerberater_export(supabase)
-            else:
-                st.title(available_menus[selected_main])
-                st.info("Dieses Modul wird als Nächstes ausgebaut.")
-
-# -----------------------------------------------------------------------------
-# Kontrollfluss
-# -----------------------------------------------------------------------------
-if not st.session_state.get("authenticated", False):
-    render_login()
-else:
-    render_app()
+    if st.session_state.get

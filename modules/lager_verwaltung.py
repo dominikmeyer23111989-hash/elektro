@@ -16,76 +16,148 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Rückkamera-Live-Scan, Multibuchungs-Warenkorb & Direkte QR-Anzeige.")
-    st.caption("High-Speed Lager: Direkt-Rückkamera, Multibuchungs-Warenkorb & Direkte QR-Anzeige.")
+    st.caption("High-Speed Lager: Live-Rückkamera-Scanner, Multibuchungs-Warenkorb & Direkte QR-Anzeige.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
-@@ -89,7 +89,7 @@
+        return
+
+    darf_bearbeiten = hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
+    darf_loeschen = hat_recht("2", "loeschen") or hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
+
+    try:
+        m_res = supabase.table("lager_material").select("*").order("bezeichnung").execute()
+        material_liste = m_res.data or []
+    except Exception:
+        material_liste = []
+
+    if "multibuchung_liste" not in st.session_state:
+        st.session_state["multibuchung_liste"] = []
+
+    tabs = st.tabs([
+        "📊 Bestandsübersicht & Turbo-Suche", 
+        "⚡ Multibuchung & Schnell-Scan", 
+        "🖨️ Etiketten (QR & Barcode)",
+        "➕ Artikel anlegen",
+        "✏️ Artikel bearbeiten / löschen",
+        "📋 Inventur",
+        "📥 CSV-Import"
+    ])
+
+    # --- TAB 1: BESTANDSÜBERSICHT & TURBO-SUCHE ---
+    with tabs[0]:
+        st.subheader("Aktueller Lagerbestand & Standort-Finder")
+
+        if not material_liste:
+            st.info("Noch keine Artikel im Lager vorhanden.")
+        else:
+            suchbegriff = st.text_input("🔍 Turbo-Suche (Bezeichnung, Artikelnummer, Kategorie oder Lagerort)...", "", key="turbo_suche_input")
+
+            gefilterte_liste = []
+            for mat in material_liste:
+                text_kombi = f"{mat.get('artikelnummer', '')} {mat.get('bezeichnung', '')} {mat.get('kategorie', '')} {mat.get('lagerort', '')}".lower()
+                if suchbegriff.lower() in text_kombi:
+                    gefilterte_liste.append(mat)
+
+            anzeige_daten = []
+            for m in gefilterte_liste:
+                soll = m.get('soll_bestand', 0)
+                ist = m.get('ist_bestand', 0)
+                
+                if ist <= 0:
+                    status = "🔴 Leer"
+                elif ist < soll:
+                    status = "🟡 Unter Soll"
+                else:
+                    status = "🟢 OK"
+
+                anzeige_daten.append({
+                    "ID": m.get('id'),
+                    "Status": status,
+                    "Code": m.get('artikelnummer', '-'),
+                    "Bezeichnung": m.get('bezeichnung'),
+                    "Kategorie": m.get('kategorie', 'Allgemein'),
+                    "📍 Lagerort": m.get('lagerort', '⚠️ Kein Ort angegeben'),
+                    "Ist-Bestand": f"{ist} {m.get('einheit', 'Stk.')}",
+                    "Soll": f"{soll}"
+                })
+
+            df = pd.DataFrame(anzeige_daten)
+            if not df.empty:
+                st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
+                st.caption(f"Gefunden: {len(df)} Artikel")
             else:
                 st.warning("Keine Artikel gefunden.")
 
-    # --- TAB 2: MULTIBUCHUNG & SCHNELL-SCAN (RÜCKKAMERA AKTIVIERT) ---
     # --- TAB 2: MULTIBUCHUNG & SCHNELL-SCAN ---
     with tabs[1]:
         st.subheader("⚡ Multibuchung (Mehrere Artikel scannen & gesammelt buchen)")
-        st.caption("Fügen Sie nacheinander Artikel per Code oder Suche hinzu und buchen Sie alles auf einmal ab.")
-@@ -99,7 +99,7 @@
+        st.caption("Scannen Sie den QR-Code mit der Rückkamera oder wählen Sie den Artikel aus.")
+
+        if not material_liste:
+            st.warning("Noch keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            # HTML5 Scanner fix auf Rückkamera (environment) eingestellt
-            # HTML5 Scanner direkt auf Rückkamera gezwungen ohne Auswahldialog
+            # Stabiler JavaScript-Scanner mit direktem Ausgabefeld & Button
             scanner_html = """
-            <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; text-align: center;">
-                <p style="margin: 0; font-size: 14px; font-weight: bold;">📷 Live-Rückkamera Scanner</p>
-@@ -110,316 +110,327 @@
+            <div style="background-color: #f0f2f6; padding: 12px; border-radius: 10px; text-align: center; font-family: sans-serif;">
+                <p style="margin: 0 0 8px 0; font-size: 15px; font-weight: bold; color: #31333F;">📷 Live-Rückkamera Scanner</p>
+                <div id="reader" style="width: 100%; max-width: 320px; margin: auto; border-radius: 8px; overflow: hidden;"></div>
+                <div id="result-box" style="margin-top: 12px; display: none; background: white; padding: 10px; border-radius: 6px; border: 2px solid #00C853;">
+                    <p style="margin: 0; font-size: 12px; color: #666;">Erfasster Code:</p>
+                    <p id="scanned-code-text" style="margin: 4px 0; font-size: 18px; font-weight: bold; color: #000;"></p>
+                    <button onclick="copyToStreamlit()" style="background-color: #00C853; color: white; border: none; padding: 8px 16px; font-size: 14px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%;">✅ Diesen Code übernehmen</button>
+                </div>
+            </div>
+            <script src="https://unpkg.com/html5-qrcode"></script>
+            <script>
+                let lastScannedCode = "";
                 function onScanSuccess(decodedText, decodedResult) {
-                    window.parent.postMessage({type: 'streamlit:setComponentValue', value: decodedText}, '*');
+                    if (decodedText !== lastScannedCode) {
+                        lastScannedCode = decodedText;
+                        document.getElementById('scanned-code-text').innerText = decodedText;
+                        document.getElementById('result-box').style.display = 'block';
+                    }
                 }
-                let html5QrcodeScanner = new Html5QrcodeScanner(
-                    "reader", { 
-                        fps: 10, 
-                        qrbox: { width: 200, height: 200 },
-                        facingMode: "environment" 
-                    }, false);
-                html5QrcodeScanner.render(onScanSuccess, (err) => {});
                 
                 let html5QrCode = new Html5Qrcode("reader");
                 html5QrCode.start(
-                    { facingMode: { exact: "environment" } }, 
-                    { fps: 10, qrbox: { width: 200, height: 200 } },
+                    { facingMode: "environment" }, 
+                    { fps: 10, qrbox: { width: 220, height: 220 } },
                     onScanSuccess,
-                    (errorMessage) => {
-                        // Fallback auf allgemeine Rückkamera falls 'exact' nicht unterstützt wird
-                        html5QrCode.start(
-                            { facingMode: "environment" },
-                            { fps: 10, qrbox: { width: 200, height: 200 } },
-                            onScanSuccess,
-                            (err) => {}
-                        );
-                    }
+                    (errorMessage) => {}
                 ).catch((err) => {
-                    console.error("Kamera-Start fehlgeschlagen", err);
+                    console.error("Kamera konnte nicht gestartet werden", err);
                 });
+
+                function copyToStreamlit() {
+                    // Code ins Streamlit Eingabefeld übertragen über URL/Event
+                    const inputField = window.parent.document.querySelector('input[aria-label*="Code scannen"]');
+                    if (inputField) {
+                        inputField.value = lastScannedCode;
+                        inputField.dispatchEvent(new Event('input', { bubbles: true }));
+                        inputField.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }
             </script>
             """
-            components.html(scanner_html, height=360)
+            components.html(scanner_html, height=430)
 
             col_add1, col_add2 = st.columns([2, 1])
             with col_add1:
-                eingabe_code = st.text_input("🔍 Code scannen oder Artikel wählen", placeholder="Code eingeben...", key="multiscan_input")
+                eingabe_code = st.text_input("🔍 Code scannen oder Artikel wählen", placeholder="Code eingeben oder scannen...", key="multiscan_input")
             with col_add2:
                 buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"])
 
             aktueller_treffer = None
             if eingabe_code:
                 aktueller_treffer = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(eingabe_code).strip().lower()), None)
-
+            
             if not aktueller_treffer:
                 such_filter_m = st.text_input("Oder Artikel in Liste suchen", placeholder="z.B. NYM...", key="filter_multi_artikel")
                 passende_m = [m for m in material_liste if such_filter_m.lower() in f"{m.get('bezeichnung')} {m.get('lagerort')} {m.get('artikelnummer')}".lower()] if such_filter_m else []
-
+                
                 if passende_m:
                     label_m = st.selectbox("Treffer", options=[f"{m['bezeichnung']} | Ort: {m.get('lagerort')} | Bestand: {m['ist_bestand']}" for m in passende_m])
                     aktueller_treffer = next((m for m in passende_m if f"{m['bezeichnung']} | Ort: {m.get('lagerort')} | Bestand: {m['ist_bestand']}" == label_m), None)
@@ -93,13 +165,13 @@ def render_lager_verwaltung(supabase):
             if aktueller_treffer:
                 st.markdown("---")
                 col_i1, col_i2, col_i3 = st.columns([2, 2, 1])
-
+                
                 with col_i1:
                     st.success(f"📦 **{aktueller_treffer['bezeichnung']}**")
                     st.write(f"📍 **Lagerort:** {aktueller_treffer.get('lagerort', '-')}")
                     st.write(f"🔢 **Code:** `{aktueller_treffer.get('artikelnummer', '-')}`")
                     st.write(f"📊 **Bestand:** {aktueller_treffer.get('ist_bestand', 0)} {aktueller_treffer.get('einheit', 'Stk.')}")
-
+                
                 with col_i2:
                     code_val = str(aktueller_treffer.get('artikelnummer', ''))
                     if code_val:
@@ -154,7 +226,7 @@ def render_lager_verwaltung(supabase):
                                 neuer_b = alter_b + menge_b if ist_zugang else max(0, alter_b - menge_b)
 
                                 supabase.table("lager_material").update({"ist_bestand": neuer_b}).eq("id", item["id"]).execute()
-
+                                
                                 supabase.table("lager_bewegungen").insert({
                                     "material_id": item["id"],
                                     "art": "Einbuchung" if ist_zugang else "Ausbuchung",
@@ -180,7 +252,7 @@ def render_lager_verwaltung(supabase):
             st.warning("Keine Artikel vorhanden.")
         else:
             eticket_optionen = {f"{m['bezeichnung']} [Ort: {m.get('lagerort', 'Kein Ort')}] (Code: {m.get('artikelnummer', 'Keiner')})": m for m in material_liste if m.get('artikelnummer')}
-
+            
             if not eticket_optionen:
                 st.info("💡 Hinterlegen Sie Artikelnummern, um Etiketten zu drucken.")
             else:
@@ -190,10 +262,10 @@ def render_lager_verwaltung(supabase):
                     for label in ausgewaehlte_labels:
                         mat = eticket_optionen[label]
                         code_val = str(mat.get('artikelnummer'))
-
+                        
                         st.markdown(f"### 📦 {mat.get('bezeichnung')} | 📍 Lagerort: **{mat.get('lagerort', 'Hauptlager')}**")
                         col_q, col_b = st.columns(2)
-
+                        
                         with col_q:
                             st.write("**QR-Code (Regal / Handy):**")
                             try:
@@ -236,7 +308,7 @@ def render_lager_verwaltung(supabase):
                 with col_a2:
                     n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])
                     n_lagerort = st.text_input("📍 Lagerort / Regal", placeholder="z.B. Regal A1, Fach 3")
-
+                    
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:
                         n_soll = st.number_input("Mindestbestand", min_value=0, value=5)
@@ -278,7 +350,7 @@ def render_lager_verwaltung(supabase):
                 e_kategorie = st.text_input("Kategorie", value=aktiver_mat.get('kategorie', 'Allgemein'))
                 e_einheit = st.text_input("Einheit", value=aktiver_mat.get('einheit', 'Stk.'))
                 e_lagerort = st.text_input("📍 Lagerort / Regal", value=aktiver_mat.get('lagerort', ''))
-
+                
                 c_b1, c_b2 = st.columns(2)
                 with c_b1:
                     e_soll = st.number_input("Mindestbestand", min_value=0, value=int(aktiver_mat.get('soll_bestand', 5)))

@@ -9,6 +9,7 @@ from modules.kunden import render_kunden_verwaltung
 from modules.fahrzeuge import render_fahrzeug_verwaltung, render_fahrzeug_warnungen_sidebar
 from modules.gebaeude import render_gebaeude_verwaltung
 from modules.auftraege import render_auftraege_verwaltung
+from modules.tv_dashboard import render_tv_dashboard
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
@@ -33,6 +34,13 @@ try:
     supabase = get_supabase()
 except Exception as e:
     st.error(f"Fehler bei der Verbindung zu Supabase: {e}")
+
+# -----------------------------------------------------------------------------
+# Direkter TV-Dashboard Check (?view=tv) - Vor dem Login-Check!
+# -----------------------------------------------------------------------------
+if st.query_params.get("view") == "tv":
+    render_tv_dashboard(supabase)
+    st.stop()
 
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False

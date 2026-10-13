@@ -10,7 +10,7 @@ from modules.fahrzeuge import render_fahrzeug_verwaltung, render_fahrzeug_warnun
 from modules.gebaeude import render_gebaeude_verwaltung
 from modules.auftraege import render_auftraege_verwaltung
 from modules.tv_dashboard import render_tv_dashboard
-from modules.lager_verwaltung import render_lager_verwaltung  # <--- HIER IMPORTIERT
+from modules.lager_verwaltung import render_lager_verwaltung 
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 

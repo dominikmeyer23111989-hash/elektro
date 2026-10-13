@@ -3,13 +3,28 @@ from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
 
+def hat_recht(modul_id, aktion="sehen"):
+    """Prüft über die app.py-Logik, ob das Recht vorliegt."""
+    user = st.session_state.get("user_data", {})
+    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+        return True
+    rechte = user.get("rechte", [])
+    return f"{modul_id}_{aktion}" in rechte
+
 def render_zeiterfassung(supabase):
     st.title("⏱️ 3. Zeiterfassung & Arbeitszeiten")
     st.caption("Erfassen Sie Ihre Arbeitszeit per Klick. Die Soll-Stunden und individuellen Pausen sind aus Ihrer Personalakte hinterlegt.")
 
+    if not hat_recht("3", "sehen"):
+        st.error("⛔ Sie haben keine Berechtigung, das Zeiterfassungs-Modul aufzurufen.")
+        return
+
     user = st.session_state.get("user_data", {})
     user_id = user.get("id")
-    is_admin = user.get("rolle") in ["Admin", "Bauleiter", "Büro / Verwaltung"]
+    
+    darf_erstellen = hat_recht("3", "erstellen")
+    darf_bearbeiten = hat_recht("3", "bearbeiten")
+    is_admin = darf_bearbeiten or (user.get("rolle") in ["Admin", "Bauleiter", "Büro / Verwaltung"])
 
     # 1. Mitarbeiter-Stammdaten & wochentägliche Soll-Zeiten laden
     try:
@@ -29,7 +44,7 @@ def render_zeiterfassung(supabase):
         1: float(ma_data.get("soll_di", 8.0)),
         2: float(ma_data.get("soll_mi", 8.0)),
         3: float(ma_data.get("soll_do", 8.0)),
-        4: float(ma_data.get("soll_fr", 6.0)), # Freitag standardmäßig z.B. 6 Stunden
+        4: float(ma_data.get("soll_fr", 6.0)),
         5: 0.0,
         6: 0.0
     }
@@ -42,16 +57,14 @@ def render_zeiterfassung(supabase):
     except Exception:
         offener_eintrag = None
 
-    # Oben: Metriken anzeigen (mit echter lokaler Uhrzeit für den Status)
+    # Oben: Metriken anzeigen
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     col_m1.metric("Wochenstunden (Soll)", f"{wochenstunden} Std.")
     col_m2.metric("Heutiges Tages-Soll", f"{tages_soll:.1f} Std.")
     col_m3.metric("Ihre Standard-Pause", f"{standard_pause} Min.")
     
     if offener_eintrag:
-        # Lokale Uhrzeit für die Anzeige bereinigen
         ein_dt = datetime.fromisoformat(offener_eintrag["einstempeln"].replace('Z', '+00:00'))
-        # In Berlin-Zeit umrechnen, falls in der DB UTC liegt
         if ein_dt.tzinfo is not None:
             ein_dt = ein_dt.astimezone(ZoneInfo("Europe/Berlin"))
         status_text = f"🟢 Eingestempelt seit {ein_dt.strftime('%H:%M Uhr')}"
@@ -74,11 +87,12 @@ def render_zeiterfassung(supabase):
 
         with col_s1:
             st.subheader("Stempeluhr")
-            if not offener_eintrag:
+            if not darf_erstellen:
+                st.info("ℹ️ Ihr Account hat nur Leserechte. Sie können sich nicht selbst ein- oder ausstempeln.")
+            elif not offener_eintrag:
                 st.info("Sie sind aktuell **nicht** eingestempelt.")
                 if st.button("🟢 Jetzt Einstempeln", type="primary", use_container_width=True):
                     try:
-                        # Exakte deutsche Lokalzeit erzwingen
                         jetzt = datetime.now(ZoneInfo("Europe/Berlin")).isoformat(timespec='seconds')
                         supabase.table("zeiterfassung").insert({
                             "mitarbeiter_id": user_id,
@@ -101,7 +115,6 @@ def render_zeiterfassung(supabase):
                     
                     if st.form_submit_button("🔴 Jetzt Ausstempeln", type="primary", use_container_width=True):
                         try:
-                            # Exakte deutsche Lokalzeit erzwingen
                             jetzt_aus = datetime.now(ZoneInfo("Europe/Berlin")).isoformat(timespec='seconds')
                             supabase.table("zeiterfassung").update({
                                 "ausstempeln": jetzt_aus,

@@ -10,6 +10,7 @@ from modules.fahrzeuge import render_fahrzeug_verwaltung, render_fahrzeug_warnun
 from modules.gebaeude import render_gebaeude_verwaltung
 from modules.auftraege import render_auftraege_verwaltung
 from modules.tv_dashboard import render_tv_dashboard
+from modules.lager_verwaltung import render_lager_verwaltung  # <--- HIER IMPORTIERT
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
@@ -98,7 +99,6 @@ def render_login():
                                 rolle_info = user_rec.get("rollen") or {}
                                 f_rolle = rolle_info.get("bezeichnung", "Admin")
                                 f_ebene = rolle_info.get("ebene", "buero")
-                                # Fallback auf alle Rechte, falls noch keine feinen Rechte hinterlegt sind
                                 f_rechte = rolle_info.get("erlaubte_menues") or [
                                     "1_sehen", "1_erstellen", "1_bearbeiten", "1_loeschen",
                                     "2_sehen", "2_erstellen", "2_bearbeiten", "2_loeschen",
@@ -412,6 +412,8 @@ def render_app():
 
             if selected_main == "1":
                 render_mitarbeiter_verwaltung(supabase)
+            elif selected_main == "2":
+                render_lager_verwaltung(supabase)  # <--- HIER EINGEBUNDEN
             elif selected_main == "3":
                 render_zeiterfassung(supabase)
             elif selected_main == "4":

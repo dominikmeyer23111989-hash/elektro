@@ -5,15 +5,6 @@ from io import BytesIO
 import barcode
 from barcode.writer import ImageWriter
 import qrcode
-import cv2
-import numpy as np
-
-# Robuster Import für OpenCV QR-Code-Erkennung
-try:
-    qr_detector = cv2.QRCodeDetector()
-    QR_AVAILABLE = True
-except Exception:
-    QR_AVAILABLE = False
 
 def hat_recht(modul_id, aktion="sehen"):
     user = st.session_state.get("user_data", {})
@@ -24,7 +15,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("Das intelligente Lager: QR-Code Kamera-Scan, Barcode-Scanner, Etikettendruck & Artikelpflege.")
+    st.caption("High-Speed Lager: Live-Suche, Lagerort-Anzeige & Barcode-/QR-Workflow.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -40,8 +31,8 @@ def render_lager_verwaltung(supabase):
         material_liste = []
 
     tabs = st.tabs([
-        "📊 Bestandsübersicht", 
-        "⚡ QR- / Barcode-Buchung", 
+        "📊 Bestandsübersicht & Turbo-Suche", 
+        "⚡ Schnell-Buchung (Entnahme / Zugang)", 
         "🖨️ Etiketten (QR & Barcode)",
         "➕ Artikel anlegen",
         "✏️ Artikel bearbeiten / löschen",
@@ -49,18 +40,19 @@ def render_lager_verwaltung(supabase):
         "📥 CSV-Import"
     ])
 
-    # --- TAB 1: BESTANDSÜBERSICHT ---
+    # --- TAB 1: BESTANDSÜBERSICHT & TURBO-SUCHE ---
     with tabs[0]:
-        st.subheader("Aktueller Lagerbestand")
+        st.subheader("Aktueller Lagerbestand & Standort-Finder")
 
         if not material_liste:
             st.info("Noch keine Artikel im Lager vorhanden.")
         else:
-            suchbegriff = st.text_input("🔍 Artikel suchen (Bezeichnung, Artikelnummer oder Kategorie)", "")
+            # Sofort-Suchfeld mit Live-Filter
+            suchbegriff = st.text_input("🔍 Turbo-Suche (Nach Bezeichnung, Artikelnummer, Kategorie oder Lagerort suchen)...", "", key="turbo_suche_input")
 
             gefilterte_liste = []
             for mat in material_liste:
-                text_kombi = f"{mat.get('artikelnummer', '')} {mat.get('bezeichnung', '')} {mat.get('kategorie', '')}".lower()
+                text_kombi = f"{mat.get('artikelnummer', '')} {mat.get('bezeichnung', '')} {mat.get('kategorie', '')} {mat.get('lagerort', '')}".lower()
                 if suchbegriff.lower() in text_kombi:
                     gefilterte_liste.append(mat)
 
@@ -70,81 +62,81 @@ def render_lager_verwaltung(supabase):
                 ist = m.get('ist_bestand', 0)
                 
                 if ist <= 0:
-                    status = "🔴 Leer / Kritisch"
+                    status = "🔴 Leer"
                 elif ist < soll:
                     status = "🟡 Unter Soll"
                 else:
-                    status = "🟢 Ausreichend"
+                    status = "🟢 OK"
 
                 anzeige_daten.append({
                     "ID": m.get('id'),
                     "Status": status,
-                    "Artikel-Nr. / Code": m.get('artikelnummer', '-'),
+                    "Code": m.get('artikelnummer', '-'),
                     "Bezeichnung": m.get('bezeichnung'),
                     "Kategorie": m.get('kategorie', 'Allgemein'),
-                    "Lagerort": m.get('lagerort', '-'),
+                    "📍 Lagerort": m.get('lagerort', '⚠️ Kein Ort angegeben'),
                     "Ist-Bestand": f"{ist} {m.get('einheit', 'Stk.')}",
-                    "Soll-Bestand": f"{soll} {m.get('einheit', 'Stk.')}"
+                    "Soll": f"{soll}"
                 })
 
             df = pd.DataFrame(anzeige_daten)
             if not df.empty:
                 st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
+                st.caption(f"Gefunden: {len(df)} Artikel")
             else:
                 st.warning("Keine Artikel gefunden.")
 
-    # --- TAB 2: QR- / BARCODE-BUCHUNG (KAMERA ODER HANDSCANNER) ---
+    # --- TAB 2: SCHNELL-BUCHUNG MIT TURBO-AUSWAHL & LAGERORT ---
     with tabs[1]:
-        st.subheader("⚡ QR- & Barcode Ein- / Ausbuchung")
-        st.caption("Scannen Sie einen QR-Code per Handykamera oder nutzen Sie einen Handscanner.")
+        st.subheader("⚡ Material Ein- oder Ausbuchen")
+        st.caption("Geben Sie den Code ein oder tippen Sie den Namen ein – der Lagerort wird sofort angezeigt.")
 
         if not material_liste:
-            st.warning("Keine Artikel im Lager vorhanden.")
+            st.warning("Noch keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            scan_methode = st.radio("Erfassungsmethode", ["📷 QR-Code per Handykamera fotografieren", "⌨️ Handscanner / Manuelle Eingabe"], horizontal=True)
+            # Schnelle Eingabe per Scanner / Tastatur
+            eingabe_code = st.text_input("🔍 Barcode / Artikelnummer eingeben oder scannen", placeholder="Code eintippen oder scannen...", key="schnell_buchung_code_input")
 
-            erfasster_code = ""
-
-            if "Kamera" in scan_methode:
-                foto = st.camera_input("QR-Code vor die Kamera halten")
-                if foto:
-                    file_bytes = np.asarray(bytearray(foto.read()), dtype=np.uint8)
-                    opencv_image = cv2.imdecode(file_bytes, 1)
-
-                    if QR_AVAILABLE:
-                        try:
-                            retval, decoded_info, points, straight_qrcode = qr_detector.detectAndDecodeMulti(opencv_image)
-                            if retval and decoded_info:
-                                erfasster_code = decoded_info[0]
-                                st.success(f"🎯 **QR-Code erkannt:** `{erfasster_code}`")
-                            else:
-                                st.warning("⚠️ Kein QR-Code auf dem Bild erkannt. Versuchen Sie es näher oder mit mehr Licht.")
-                        except Exception as e:
-                            st.error(f"Fehler bei der QR-Erkennung: {e}")
-                    else:
-                        st.error("OpenCV QR-Modul nicht verfügbar.")
-            else:
-                erfasster_code = st.text_input("🔍 Barcode scannen oder Nummer eintippen", placeholder="Code hier eingeben...")
-
-            # Artikel anhand des Codes suchen
             selected_artikel = None
-            if erfasster_code:
-                selected_artikel = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(erfasster_code).strip().lower()), None)
-                if selected_artikel:
-                    st.info(f"Gefunden: **{selected_artikel['bezeichnung']}** (Aktueller Bestand: {selected_artikel['ist_bestand']} {selected_artikel.get('einheit', 'Stk.')})")
-                else:
-                    st.warning(f"⚠️ Kein Artikel mit dem Code '{erfasster_code}' im System gefunden.")
-
-            # Fallback per Dropdown, falls man manuell wählen möchte
+            if eingabe_code:
+                # Exakte Suche nach Code oder Teilsuche
+                selected_artikel = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(eingabe_code).strip().lower()), None)
+                
+            # Wenn kein exakter Code getroffen wurde oder man direkt wählen will:
             if not selected_artikel:
-                artikel_optionen = {f"{m['bezeichnung']} (Code: {m.get('artikelnummer', '-')}) [Bestand: {m['ist_bestand']}]": m for m in material_liste}
-                auswahl_label = st.selectbox("Oder Artikel direkt aus Liste wählen", options=list(artikel_optionen.keys()))
-                selected_artikel = artikel_optionen[auswahl_label]
+                st.markdown("---")
+                st.write("💡 **Oder direkt nach Artikel / Lagerort filtern:**")
+                
+                # Filterbares Auswahlfeld (ersetzt das starre Dropdown für große Datenmengen)
+                such_filter = st.text_input("Suchfilter für Auswahlliste", placeholder="z.B. NYM oder Regal B...", key="filter_auswahl_buchung")
+                
+                passende_optionen = []
+                for m in material_liste:
+                    zeile = f"{m.get('bezeichnung')} | Ort: {m.get('lagerort', 'Kein Ort')} | Code: {m.get('artikelnummer', '-')} | Bestand: {m.get('ist_bestand', 0)} {m.get('einheit', 'Stk.')}"
+                    if such_filter.lower() in zeile.lower():
+                        passende_optionen.append((zeile, m))
 
+                if passende_optionen:
+                    auswahl_labels = [opt[0] for opt in passende_optionen]
+                    gewähltes_label = st.selectbox("Treffer in der Auswahlliste", options=auswahl_labels, key="selectbox_gefundener_artikel")
+                    selected_artikel = next((opt[1] for opt in passende_optionen if opt[0] == gewähltes_label), None)
+                else:
+                    st.warning("Kein Artikel entspricht dem Filter.")
+
+            # Wenn ein Artikel aktiv ist, Buchungsmaske anzeigen
             if selected_artikel:
-                with st.form("buchungs_form"):
+                st.success(f"📦 **{selected_artikel['bezeichnung']}**")
+                col_info1, col_info2, col_info3 = st.columns(3)
+                with col_info1:
+                    st.metric("Aktueller Bestand", f"{selected_artikel.get('ist_bestand', 0)} {selected_artikel.get('einheit', 'Stk.')}")
+                with col_info2:
+                    st.metric("📍 Lagerort", f"{selected_artikel.get('lagerort', 'Nicht zugewiesen')}")
+                with col_info3:
+                    st.metric("Artikel-Code", f"{selected_artikel.get('artikelnummer', '-')}")
+
+                with st.form("buchungs_maske_form"):
                     buchungs_art = st.radio("Aktion", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"], horizontal=True)
                     menge = st.number_input("Menge", min_value=1, value=1, step=1)
                     kommentar = st.text_input("Projekt / Baustelle / Grund", placeholder="z.B. BV Hauptstraße")
@@ -169,16 +161,16 @@ def render_lager_verwaltung(supabase):
 
     # --- TAB 3: ETIKETTEN DRUCKEN (QR & BARCODE) ---
     with tabs[2]:
-        st.subheader("🖨️ Etiketten (QR-Codes & Barcodes)")
-        st.caption("Generieren Sie Etiketten für Ihre Regale und Kisten – sowohl als QR-Code (für Handys) als auch als Barcode (für Laserscanner).")
+        st.subheader("🖨️ Etiketten für Regale & Kartons drucken")
+        st.caption("Drucken Sie QR-Codes (für Handys) und Barcodes (für Scanner) aus und kleben Sie diese direkt an den Lagerort/Regalplatz.")
 
         if not material_liste:
             st.warning("Keine Artikel vorhanden.")
         else:
-            eticket_optionen = {f"{m['bezeichnung']} (Code: {m.get('artikelnummer', 'Keiner')})": m for m in material_liste if m.get('artikelnummer')}
+            eticket_optionen = {f"{m['bezeichnung']} [Ort: {m.get('lagerort', 'Kein Ort')}] (Code: {m.get('artikelnummer', 'Keiner')})": m for m in material_liste if m.get('artikelnummer')}
             
             if not eticket_optionen:
-                st.info("💡 Hinterlegen Sie bei Ihren Artikeln eine Artikelnummer, um Etiketten zu drucken.")
+                st.info("💡 Hinterlegen Sie Artikelnummern, um Etiketten zu drucken.")
             else:
                 ausgewaehlte_labels = st.multiselect("Artikel für Etikettendruck wählen", options=list(eticket_optionen.keys()))
 
@@ -187,12 +179,11 @@ def render_lager_verwaltung(supabase):
                         mat = eticket_optionen[label]
                         code_val = str(mat.get('artikelnummer'))
                         
-                        st.markdown(f"### 📦 {mat.get('bezeichnung')} (Lagerort: {mat.get('lagerort', 'Hauptlager')})")
+                        st.markdown(f"### 📦 {mat.get('bezeichnung')} | 📍 Lagerort: **{mat.get('lagerort', 'Hauptlager')}**")
                         col_q, col_b = st.columns(2)
                         
-                        # QR-Code generieren
                         with col_q:
-                            st.write("**QR-Code (für Handykamera):**")
+                            st.write("**QR-Code (Regal / Handy):**")
                             try:
                                 qr = qrcode.QRCode(version=1, box_size=5, border=2)
                                 qr.add_data(code_val)
@@ -204,9 +195,8 @@ def render_lager_verwaltung(supabase):
                             except Exception as e:
                                 st.error(f"QR-Fehler: {e}")
 
-                        # Barcode generieren
                         with col_b:
-                            st.write("**Barcode (für Handscanner):**")
+                            st.write("**Barcode (Handscanner):**")
                             try:
                                 EAN = barcode.get_class('code128')
                                 rv = BytesIO()
@@ -222,34 +212,18 @@ def render_lager_verwaltung(supabase):
     # --- TAB 4: ARTIKEL ANLEGEN ---
     with tabs[3]:
         st.subheader("➕ Neuen Artikel anlegen")
-        st.caption("Scannen Sie optional einen Karton/Barcode per Kamera als Vorlage oder tragen Sie die Nummer ein.")
-
         if not darf_bearbeiten:
             st.error("⛔ Keine Berechtigung.")
         else:
-            scan_anlegen = st.radio("QR-Code vom Karton scannen?", ["Nein (manuell eingeben)", "Ja (per Kamera scannen)"], horizontal=True)
-            vorbelegter_code = ""
-
-            if "Ja" in scan_anlegen:
-                foto_anlegen = st.camera_input("QR-Code scannen für neuen Artikel")
-                if foto_anlegen:
-                    f_bytes = np.asarray(bytearray(foto_anlegen.read()), dtype=np.uint8)
-                    cv_img = cv2.imdecode(f_bytes, 1)
-                    if QR_AVAILABLE:
-                        retval, decoded_info, _, _ = qr_detector.detectAndDecodeMulti(cv_img)
-                        if retval and decoded_info:
-                            vorbelegter_code = decoded_info[0]
-                            st.success(f"🎯 Erkannt: `{vorbelegter_code}` (wird unten eingetragen)")
-
             with st.form("neuer_artikel_form"):
                 col_a1, col_a2 = st.columns(2)
                 with col_a1:
                     n_bezeichnung = st.text_input("Artikelbezeichnung *", placeholder="z.B. NYM-J 3x1.5")
-                    n_artnr = st.text_input("Artikelnummer / Barcode *", value=vorbelegter_code, placeholder="z.B. EAN oder interner Code")
+                    n_artnr = st.text_input("Artikelnummer / Barcode *", placeholder="z.B. EAN oder interner Code")
                     n_kategorie = st.selectbox("Kategorie", ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug"])
                 with col_a2:
                     n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])
-                    n_lagerort = st.text_input("Lagerort / Regal", placeholder="z.B. Regal A1")
+                    n_lagerort = st.text_input("📍 Lagerort / Regal (wichtig für Suche)", placeholder="z.B. Regal A1, Fach 3")
                     
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:
@@ -257,9 +231,9 @@ def render_lager_verwaltung(supabase):
                     with col_b2:
                         n_ist = st.number_input("Anfangsbestand", min_value=0, value=10)
 
-                if st.form_submit_button("Artikel speichern & Codes generieren", type="primary", use_container_width=True):
+                if st.form_submit_button("Artikel speichern", type="primary", use_container_width=True):
                     if not n_bezeichnung or not n_artnr:
-                        st.warning("Bitte Bezeichnung und Artikelnummer/Barcode angeben.")
+                        st.warning("Bitte Bezeichnung und Artikelnummer angeben.")
                     else:
                         try:
                             supabase.table("lager_material").insert({
@@ -271,7 +245,7 @@ def render_lager_verwaltung(supabase):
                                 "soll_bestand": n_soll,
                                 "ist_bestand": n_ist
                             }).execute()
-                            st.toast(f"✅ Artikel '{n_bezeichnung}' erfolgreich angelegt!", icon="🎉")
+                            st.toast(f"✅ Artikel '{n_bezeichnung}' angelegt!", icon="🎉")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler: {e}")
@@ -279,13 +253,11 @@ def render_lager_verwaltung(supabase):
     # --- TAB 5: ARTIKEL BEARBEITEN / LÖSCHEN ---
     with tabs[4]:
         st.subheader("✏️ Artikel bearbeiten oder löschen")
-        st.caption("Wählen Sie einen Artikel aus, um Bestände, Bezeichnungen anzupassen oder den Artikel aus dem System zu löschen.")
-
         if not material_liste:
             st.warning("Keine Artikel vorhanden.")
         else:
-            bearb_optionen = {f"{m['bezeichnung']} (Code: {m.get('artikelnummer', '-')})": m for m in material_liste}
-            auswahl_bearb = st.selectbox("Artikel auswählen", options=list(bearb_optionen.keys()), key="select_bearb_artikel")
+            bearb_optionen = {f"{m['bezeichnung']} (Ort: {m.get('lagerort', '-')}) [Code: {m.get('artikelnummer', '-')}]": m for m in material_liste}
+            auswahl_bearb = st.selectbox("Artikel für Bearbeitung wählen", options=list(bearb_optionen.keys()), key="select_bearb_artikel")
             aktiver_mat = bearb_optionen[auswahl_bearb]
 
             with st.form("artikel_bearbeiten_form"):
@@ -293,7 +265,7 @@ def render_lager_verwaltung(supabase):
                 e_artnr = st.text_input("Artikelnummer / Barcode", value=aktiver_mat.get('artikelnummer', ''))
                 e_kategorie = st.text_input("Kategorie", value=aktiver_mat.get('kategorie', 'Allgemein'))
                 e_einheit = st.text_input("Einheit", value=aktiver_mat.get('einheit', 'Stk.'))
-                e_lagerort = st.text_input("Lagerort", value=aktiver_mat.get('lagerort', ''))
+                e_lagerort = st.text_input("📍 Lagerort / Regal", value=aktiver_mat.get('lagerort', ''))
                 
                 c_b1, c_b2 = st.columns(2)
                 with c_b1:
@@ -324,18 +296,18 @@ def render_lager_verwaltung(supabase):
                         except Exception as e:
                             st.error(f"Fehler: {e}")
                     else:
-                        st.error("Keine Berechtigung zum Bearbeiten.")
+                        st.error("Keine Berechtigung.")
 
                 if btn_loeschen:
                     if darf_loeschen:
                         try:
                             supabase.table("lager_material").delete().eq("id", aktiver_mat['id']).execute()
-                            st.toast("🗑️ Artikel erfolgreich gelöscht!", icon="🗑️")
+                            st.toast("🗑️ Artikel gelöscht!", icon="🗑️")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler: {e}")
                     else:
-                        st.error("Keine Berechtigung zum Löschen.")
+                        st.error("Keine Berechtigung.")
 
     # --- TAB 6: INVENTUR ---
     with tabs[5]:
@@ -350,7 +322,7 @@ def render_lager_verwaltung(supabase):
                 for m in material_liste:
                     col1, col2, col3 = st.columns([3, 2, 2])
                     with col1:
-                        st.write(f"**{m.get('bezeichnung')}** `({m.get('artikelnummer', 'Kein Code')})`")
+                        st.write(f"**{m.get('bezeichnung')}** | 📍 `{m.get('lagerort', 'Kein Ort')}`")
                     with col2:
                         st.write(f"Soll: **{m.get('ist_bestand', 0)}**")
                     with col3:

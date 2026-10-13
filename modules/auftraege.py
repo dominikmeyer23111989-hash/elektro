@@ -22,6 +22,19 @@ def clean_text(text):
         return "-"
     return str(text).encode('latin-1', 'replace').decode('latin-1')
 
+def format_de_zeit(iso_string):
+    """Wandelt einen ISO-Zeitstempel in das deutsche Format TT.MM.YYYY um (mit Uhrzeit)"""
+    if not iso_string:
+        return "-"
+    try:
+        dt = datetime.fromisoformat(iso_string.replace('Z', '+00:00'))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(ZoneInfo("Europe/Berlin"))
+        return dt.strftime('%d.%m.%Y um %H:%M Uhr')
+    except Exception:
+        # Fallback wenn reiner String
+        return str(iso_string)[:16]
+
 def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
     pdf = AuftragPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
@@ -34,9 +47,10 @@ def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
     status_str = a.get('status', 'Offen')
     pdf.cell(0, 6, clean_text(f"Status: {status_str}"), new_x="LMARGIN", new_y="NEXT")
     
-    t_um = str(a.get('termin_um', ''))[:16].replace('T', ' ')
-    t_bis = str(a.get('termin_bis', ''))[:16].replace('T', ' ')
-    pdf.cell(0, 6, clean_text(f"Einsatztermin: Von {t_um} bis {t_bis} Uhr"), new_x="LMARGIN", new_y="NEXT")
+    # Deutsche Zeitformatierung für PDF
+    t_von_de = format_de_zeit(a.get('termin_um'))
+    t_bis_de = format_de_zeit(a.get('termin_bis'))
+    pdf.cell(0, 6, clean_text(f"Einsatztermin: Von {t_von_de} bis {t_bis_de}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     pdf.set_font('Helvetica', 'B', 11)
@@ -152,9 +166,9 @@ def render_auftraege_verwaltung(supabase):
                     if a.get('mieter_we'):
                         st.write(f"**Mieter / WE:** {a.get('mieter_we')}")
                     
-                    t_um = str(a.get('termin_um', ''))[:16].replace('T', ' ')
-                    t_bis = str(a.get('termin_bis', ''))[:16].replace('T', ' ')
-                    st.write(f"**Geplanter Einsatztermin:** Von {t_um} bis {t_bis} Uhr")
+                    t_von_de = format_de_zeit(a.get('termin_um'))
+                    t_bis_de = format_de_zeit(a.get('termin_bis'))
+                    st.write(f"**Geplanter Einsatztermin:** Von {t_von_de} bis {t_bis_de}")
                     st.write(f"**Aktueller Status:** {a.get('status')}")
                     st.write(f"**Benötigtes Material:** {a.get('benoetigtes_material') or 'Noch nichts eingetragen'}")
 
@@ -209,7 +223,6 @@ def render_auftraege_verwaltung(supabase):
                 with col1:
                     n_auftragsnummer = st.text_input("Auftragsnummer *", value=f"A-{datetime.now().strftime('%Y%m%d')}-01")
                     
-                    # Optionaler Kunde
                     kunden_optionen = [None] + [k["id"] for k in kunden_liste]
                     n_kunde = st.selectbox(
                         "Auftraggeber (Kunde) – Optional",
@@ -217,7 +230,6 @@ def render_auftraege_verwaltung(supabase):
                         format_func=lambda x: "--- Kein Kunde / Spontanauftrag ---" if x is None else next((f"{k['nachname']}, {k['vorname']} ({k.get('firma', 'Privat')})" for k in kunden_liste if k["id"] == x), "")
                     )
 
-                    # Optionales Gebäude
                     gebaeude_optionen = [None] + [g["id"] for g in gebaeude_liste]
                     n_gebaeude = st.selectbox(
                         "Auftragsort (Gebäude / Objekt) – Optional",
@@ -238,13 +250,14 @@ def render_auftraege_verwaltung(supabase):
                         n_monteur = None
                         st.warning("Keine verfügbaren Mitarbeiter gefunden.")
                     
-                    st.write("Einsatztermin (Datum & Uhrzeit)")
+                    st.write("Einsatztermin (Deutsches Format)")
                     col_d1, col_d2 = st.columns(2)
                     with col_d1:
-                        n_datum = st.date_input("Einsatzdatum", value=datetime.today())
+                        # Streamlit date_input zeigt im UI automatisch das deutsche Format bei passender Locale/Browser
+                        n_datum = st.date_input("Einsatzdatum (TT.MM.JJJJ)", value=datetime.today(), format="DD.MM.YYYY")
                     with col_d2:
-                        n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.strptime("08:00", "%H:%M").time())
-                        n_uhr_bis = st.time_input("Uhrzeit Bis", value=datetime.strptime("16:00", "%H:%M").time())
+                        n_uhr_von = st.time_input("Uhrzeit Von (Uhr)", value=datetime.strptime("08:00", "%H:%M").time())
+                        n_uhr_bis = st.time_input("Uhrzeit Bis (Uhr)", value=datetime.strptime("16:00", "%H:%M").time())
 
                 n_arbeiten = st.text_area("Auszuführende Arbeiten *", placeholder="z.B. Zählerschrank umbauen, Notdienst Störung Beseitigung...")
                 n_material = st.text_area("Benötigtes Material (Vorbereitung)", placeholder="z.B. 1x FI-Schalter, 15m NYM-J 3x1.5...")

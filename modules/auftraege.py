@@ -22,8 +22,20 @@ def clean_text(text):
         return "-"
     return str(text).encode('latin-1', 'replace').decode('latin-1')
 
+def format_de_datum(iso_string):
+    """Wandelt einen ISO-Zeitstempel in deutsches Format TT.MM.YYYY um"""
+    if not iso_string:
+        return "-"
+    try:
+        # Falls es ein reines Datum ist oder ein ISO-String
+        s = str(iso_string).split("T")[0]
+        dt = datetime.strptime(s, "%Y-%m-%d")
+        return dt.strftime('%d.%m.%Y')
+    except Exception:
+        return str(iso_string)
+
 def format_de_zeit(iso_string):
-    """Wandelt einen ISO-Zeitstempel in das deutsche Format TT.MM.YYYY um (mit Uhrzeit)"""
+    """Wandelt einen ISO-Zeitstempel in deutsches Format TT.MM.YYYY um (mit Uhrzeit)"""
     if not iso_string:
         return "-"
     try:
@@ -32,7 +44,6 @@ def format_de_zeit(iso_string):
             dt = dt.astimezone(ZoneInfo("Europe/Berlin"))
         return dt.strftime('%d.%m.%Y um %H:%M Uhr')
     except Exception:
-        # Fallback wenn reiner String
         return str(iso_string)[:16]
 
 def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
@@ -47,9 +58,12 @@ def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
     status_str = a.get('status', 'Offen')
     pdf.cell(0, 6, clean_text(f"Status: {status_str}"), new_x="LMARGIN", new_y="NEXT")
     
-    # Deutsche Zeitformatierung für PDF
+    # Auftragsdatum & Termin im deutschen Format
+    a_datum_de = format_de_datum(a.get('termin_um'))
     t_von_de = format_de_zeit(a.get('termin_um'))
     t_bis_de = format_de_zeit(a.get('termin_bis'))
+    
+    pdf.cell(0, 6, clean_text(f"Auftragsdatum: {a_datum_de}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 6, clean_text(f"Einsatztermin: Von {t_von_de} bis {t_bis_de}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
@@ -162,6 +176,8 @@ def render_auftraege_verwaltung(supabase):
                 m_name = f"{monteur.get('vorname', '')} {monteur.get('nachname', '')}".strip() or "Unzugewiesen"
 
                 with st.expander(f"{status_icon} [{a.get('auftragsnummer')}] {k_name} | Objekt: {g_adr} (Monteur: {m_name})"):
+                    a_datum_de = format_de_datum(a.get('termin_um'))
+                    st.write(f"**Auftragsdatum:** {a_datum_de}")
                     st.write(f"**Auszuführende Arbeiten:** {a.get('arbeiten')}")
                     if a.get('mieter_we'):
                         st.write(f"**Mieter / WE:** {a.get('mieter_we')}")
@@ -250,14 +266,14 @@ def render_auftraege_verwaltung(supabase):
                         n_monteur = None
                         st.warning("Keine verfügbaren Mitarbeiter gefunden.")
                     
-                    st.write("Einsatztermin (Deutsches Format)")
+                    st.write("Termindaten & Auftragsdatum")
                     col_d1, col_d2 = st.columns(2)
                     with col_d1:
-                        # Streamlit date_input zeigt im UI automatisch das deutsche Format bei passender Locale/Browser
-                        n_datum = st.date_input("Einsatzdatum (TT.MM.JJJJ)", value=datetime.today(), format="DD.MM.YYYY")
+                        # Deutsches Format TT.MM.JJJJ erzwungen
+                        n_datum = st.date_input("Auftragsdatum (TT.MM.JJJJ)", value=datetime.today(), format="DD.MM.YYYY")
                     with col_d2:
-                        n_uhr_von = st.time_input("Uhrzeit Von (Uhr)", value=datetime.strptime("08:00", "%H:%M").time())
-                        n_uhr_bis = st.time_input("Uhrzeit Bis (Uhr)", value=datetime.strptime("16:00", "%H:%M").time())
+                        n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.strptime("08:00", "%H:%M").time())
+                        n_uhr_bis = st.time_input("Uhrzeit Bis", value=datetime.strptime("16:00", "%H:%M").time())
 
                 n_arbeiten = st.text_area("Auszuführende Arbeiten *", placeholder="z.B. Zählerschrank umbauen, Notdienst Störung Beseitigung...")
                 n_material = st.text_area("Benötigtes Material (Vorbereitung)", placeholder="z.B. 1x FI-Schalter, 15m NYM-J 3x1.5...")

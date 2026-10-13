@@ -7,6 +7,7 @@ from modules.zeiterfassung import render_zeiterfassung
 from modules.steuerberater import render_steuerberater_export
 from modules.kunden import render_kunden_verwaltung
 from modules.fahrzeuge import render_fahrzeug_verwaltung, render_fahrzeug_warnungen_sidebar
+from modules.gebaeude import render_gebaeude_verwaltung
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
@@ -322,7 +323,12 @@ def render_app():
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### 📂 Hauptmenü")
 
-    extended_modules = {**ALL_MODULES, "6": "6. Fahrzeugflotte & Mängel", "10": "10. Steuerberater-Export"}
+    extended_modules = {
+        **ALL_MODULES, 
+        "6": "6. Fahrzeugflotte & Mängel", 
+        "7": "7. Gebäude & Liegenschaften", 
+        "10": "10. Steuerberater-Export"
+    }
     allowed_menu_keys = user.get("rechte", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
     available_menus = {k: v for k, v in extended_modules.items() if k in allowed_menu_keys}
 
@@ -369,6 +375,8 @@ def render_app():
                 render_kunden_verwaltung(supabase)
             elif selected_main == "6":
                 render_fahrzeug_verwaltung(supabase)
+            elif selected_main == "7":
+                render_gebaeude_verwaltung(supabase)
             elif selected_main == "10":
                 render_steuerberater_export(supabase)
             else:

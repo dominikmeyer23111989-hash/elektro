@@ -57,14 +57,34 @@ def generate_kunden_pdf(k):
 
     return pdf.output()
 
+def hat_recht(modul_id, aktion="sehen"):
+    """Prüft über die app.py-Logik, ob das Recht vorliegt."""
+    user = st.session_state.get("user_data", {})
+    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+        return True
+    rechte = user.get("rechte", [])
+    return f"{modul_id}_{aktion}" in rechte
+
 def render_kunden_verwaltung(supabase):
     st.title("🏢 5. Kundenverwaltung")
     st.caption("Verwalten Sie hier Ihre Kunden, Kontaktdaten, Adressen und Projekthinweise.")
 
-    tab_liste, tab_neu = st.tabs(["📋 Kundenübersicht & Details", "➕ Neuen Kunden anlegen"])
+    if not hat_recht("5", "sehen"):
+        st.error("⛔ Sie haben keine Berechtigung, das Kunden-Modul aufzurufen.")
+        return
+
+    darf_erstellen = hat_recht("5", "erstellen")
+    darf_bearbeiten = hat_recht("5", "bearbeiten")
+
+    # Tabs dynamisch aufbauen
+    tabs_optionen = ["📋 Kundenübersicht & Details"]
+    if darf_erstellen:
+        tabs_optionen.append("➕ Neuen Kunden anlegen")
+
+    tabs = st.tabs(tabs_optionen)
 
     # --- TAB 1: Übersicht & Details ---
-    with tab_liste:
+    with tabs[0]:
         st.subheader("Alle gespeicherten Kunden")
 
         try:
@@ -111,54 +131,58 @@ def render_kunden_verwaltung(supabase):
 
             sel_kunde = next(k for k in gefilterte_kunden if k["id"] == sel_kunden_id)
 
+            if not darf_bearbeiten:
+                st.info("ℹ️ Ihr Account hat nur Leserechte für Kunden. Sie können keine Änderungen speichern.")
+
             with st.form("kunde_edit_form"):
                 st.write(f"Bearbeite Kunde: **{sel_kunde.get('kundennummer')} - {sel_kunde.get('nachname')}**")
                 
                 col_e1, col_e2 = st.columns(2)
                 with col_e1:
-                    e_firma = st.text_input("Firmenname (optional)", value=sel_kunde.get("firmenname") or "")
-                    e_vorname = st.text_input("Vorname", value=sel_kunde.get("vorname") or "")
-                    e_nachname = st.text_input("Nachname *", value=sel_kunde.get("nachname") or "")
-                    e_strasse = st.text_input("Strasse & Hausnummer", value=sel_kunde.get("strasse") or "")
+                    e_firma = st.text_input("Firmenname (optional)", value=sel_kunde.get("firmenname") or "", disabled=not darf_bearbeiten)
+                    e_vorname = st.text_input("Vorname", value=sel_kunde.get("vorname") or "", disabled=not darf_bearbeiten)
+                    e_nachname = st.text_input("Nachname *", value=sel_kunde.get("nachname") or "", disabled=not darf_bearbeiten)
+                    e_strasse = st.text_input("Strasse & Hausnummer", value=sel_kunde.get("strasse") or "", disabled=not darf_bearbeiten)
                 with col_e2:
-                    e_plz = st.text_input("PLZ", value=sel_kunde.get("plz") or "")
-                    e_ort = st.text_input("Ort", value=sel_kunde.get("ort") or "")
-                    e_telefon = st.text_input("Telefon", value=sel_kunde.get("telefon") or "")
-                    e_email = st.text_input("E-Mail", value=sel_kunde.get("email") or "")
+                    e_plz = st.text_input("PLZ", value=sel_kunde.get("plz") or "", disabled=not darf_bearbeiten)
+                    e_ort = st.text_input("Ort", value=sel_kunde.get("ort") or "", disabled=not darf_bearbeiten)
+                    e_telefon = st.text_input("Telefon", value=sel_kunde.get("telefon") or "", disabled=not darf_bearbeiten)
+                    e_email = st.text_input("E-Mail", value=sel_kunde.get("email") or "", disabled=not darf_bearbeiten)
 
-                e_notizen = st.text_area("Interne Notizen / Baustellenhinweise", value=sel_kunde.get("notizen") or "")
+                e_notizen = st.text_area("Interne Notizen / Baustellenhinweise", value=sel_kunde.get("notizen") or "", disabled=not darf_bearbeiten)
 
-                col_b1, col_b2 = st.columns(2)
-                with col_b1:
-                    btn_save = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True)
-                with col_b2:
-                    btn_delete = st.form_submit_button("🗑️ Kunde löschen", use_container_width=True)
+                if darf_bearbeiten:
+                    col_b1, col_b2 = st.columns(2)
+                    with col_b1:
+                        btn_save = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True)
+                    with col_b2:
+                        btn_delete = st.form_submit_button("🗑️ Kunde löschen", use_container_width=True)
 
-                if btn_save:
-                    try:
-                        supabase.table("kunden").update({
-                            "firmenname": e_firma,
-                            "vorname": e_vorname,
-                            "nachname": e_nachname,
-                            "strasse": e_strasse,
-                            "plz": e_plz,
-                            "ort": e_ort,
-                            "telefon": e_telefon,
-                            "email": e_email,
-                            "notizen": e_notizen
-                        }).eq("id", sel_kunden_id).execute()
-                        st.success("Kundendaten erfolgreich aktualisiert!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Fehler beim Speichern: {e}")
+                    if btn_save:
+                        try:
+                            supabase.table("kunden").update({
+                                "firmenname": e_firma,
+                                "vorname": e_vorname,
+                                "nachname": e_nachname,
+                                "strasse": e_strasse,
+                                "plz": e_plz,
+                                "ort": e_ort,
+                                "telefon": e_telefon,
+                                "email": e_email,
+                                "notizen": e_notizen
+                            }).eq("id", sel_kunden_id).execute()
+                            st.success("Kundendaten erfolgreich aktualisiert!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler beim Speichern: {e}")
 
-                if btn_delete:
-                    try:
-                        supabase.table("kunden").delete().eq("id", sel_kunden_id).execute()
-                        st.success("Kunde wurde gelöscht!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Fehler beim Löschen: {e}")
+                    if btn_delete:
+                        try:
+                            supabase.table("kunden").delete().eq("id", sel_kunden_id).execute()
+                            st.success("Kunde wurde gelöscht!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler beim Löschen: {e}")
 
             st.markdown("---")
             pdf_bytes = generate_kunden_pdf(sel_kunde)
@@ -172,44 +196,45 @@ def render_kunden_verwaltung(supabase):
             st.info("Noch keine Kunden im System hinterlegt. Legen Sie im zweiten Reiter Ihren ersten Kunden an.")
 
     # --- TAB 2: Neuer Kunde ---
-    with tab_neu:
-        st.subheader("Neuen Kunden anlegen")
+    if darf_erstellen and len(tabs) > 1:
+        with tabs[1]:
+            st.subheader("Neuen Kunden anlegen")
 
-        with st.form("neuer_kunde_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                k_nr = st.text_input("Kundennummer *", placeholder="z.B. K-1001")
-                k_firma = st.text_input("Firmenname (optional)", placeholder="z.B. Elektro Müller GmbH")
-                k_vorname = st.text_input("Vorname", placeholder="Max")
-                k_nachname = st.text_input("Nachname *", placeholder="Mustermann")
-                k_strasse = st.text_input("Strasse & Hausnummer", placeholder="Musterstraße 12")
-            with col2:
-                k_plz = st.text_input("PLZ", placeholder="44787")
-                k_ort = st.text_input("Ort", placeholder="Bochum")
-                k_telefon = st.text_input("Telefon", placeholder="0234 / 123456")
-                k_email = st.text_input("E-Mail", placeholder="kontakt@kunde.de")
-            
-            k_notizen = st.text_area("Interne Notizen / Baustellenhinweise (optional)", placeholder="z.B. Hinterhof, Klingel defekt, Schließfach-Code...")
+            with st.form("neuer_kunde_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    k_nr = st.text_input("Kundennummer *", placeholder="z.B. K-1001")
+                    k_firma = st.text_input("Firmenname (optional)", placeholder="z.B. Elektro Müller GmbH")
+                    k_vorname = st.text_input("Vorname", placeholder="Max")
+                    k_nachname = st.text_input("Nachname *", placeholder="Mustermann")
+                    k_strasse = st.text_input("Strasse & Hausnummer", placeholder="Musterstraße 12")
+                with col2:
+                    k_plz = st.text_input("PLZ", placeholder="44787")
+                    k_ort = st.text_input("Ort", placeholder="Bochum")
+                    k_telefon = st.text_input("Telefon", placeholder="0234 / 123456")
+                    k_email = st.text_input("E-Mail", placeholder="kontakt@kunde.de")
+                
+                k_notizen = st.text_area("Interne Notizen / Baustellenhinweise (optional)", placeholder="z.B. Hinterhof, Klingel defekt, Schließfach-Code...")
 
-            if st.form_submit_button("Kunden jetzt anlegen", type="primary", use_container_width=True):
-                if not k_nr or not k_nachname:
-                    st.warning("Bitte mindestens Kundennummer und Nachname (oder Firmenname) ausfüllen.")
-                else:
-                    try:
-                        data = {
-                            "kundennummer": k_nr,
-                            "firmenname": k_firma,
-                            "vorname": k_vorname,
-                            "nachname": k_nachname,
-                            "strasse": k_strasse,
-                            "plz": k_plz,
-                            "ort": k_ort,
-                            "telefon": k_telefon,
-                            "email": k_email,
-                            "notizen": k_notizen
-                        }
-                        supabase.table("kunden").insert(data).execute()
-                        st.success(f"Kunde {k_nr} - {k_nachname} erfolgreich angelegt!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Fehler beim Anlegen: {e}")
+                if st.form_submit_button("Kunden jetzt anlegen", type="primary", use_container_width=True):
+                    if not k_nr or not k_nachname:
+                        st.warning("Bitte mindestens Kundennummer und Nachname (oder Firmenname) ausfüllen.")
+                    else:
+                        try:
+                            data = {
+                                "kundennummer": k_nr,
+                                "firmenname": k_firma,
+                                "vorname": k_vorname,
+                                "nachname": k_nachname,
+                                "strasse": k_strasse,
+                                "plz": k_plz,
+                                "ort": k_ort,
+                                "telefon": k_telefon,
+                                "email": k_email,
+                                "notizen": k_notizen
+                            }
+                            supabase.table("kunden").insert(data).execute()
+                            st.success(f"Kunde {k_nr} - {k_nachname} erfolgreich angelegt!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler beim Anlegen: {e}")

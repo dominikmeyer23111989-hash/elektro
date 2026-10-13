@@ -6,3 +6,4 @@ fpdf2
 streamlit-drawable-canvas
 Pillow
 python-barcode
+pyzbar

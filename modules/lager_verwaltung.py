@@ -16,7 +16,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Rückkamera-Live-Scan, Multibuchungs-Warenkorb & Direkte QR-Anzeige.")
+    st.caption("High-Speed Lager: Direkt-Rückkamera, Multibuchungs-Warenkorb & Direkte QR-Anzeige.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -89,7 +89,7 @@ def render_lager_verwaltung(supabase):
             else:
                 st.warning("Keine Artikel gefunden.")
 
-    # --- TAB 2: MULTIBUCHUNG & SCHNELL-SCAN (RÜCKKAMERA AKTIVIERT) ---
+    # --- TAB 2: MULTIBUCHUNG & SCHNELL-SCAN ---
     with tabs[1]:
         st.subheader("⚡ Multibuchung (Mehrere Artikel scannen & gesammelt buchen)")
         st.caption("Fügen Sie nacheinander Artikel per Code oder Suche hinzu und buchen Sie alles auf einmal ab.")
@@ -99,7 +99,7 @@ def render_lager_verwaltung(supabase):
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            # HTML5 Scanner fix auf Rückkamera (environment) eingestellt
+            # HTML5 Scanner direkt auf Rückkamera gezwungen ohne Auswahldialog
             scanner_html = """
             <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; text-align: center;">
                 <p style="margin: 0; font-size: 14px; font-weight: bold;">📷 Live-Rückkamera Scanner</p>
@@ -110,13 +110,24 @@ def render_lager_verwaltung(supabase):
                 function onScanSuccess(decodedText, decodedResult) {
                     window.parent.postMessage({type: 'streamlit:setComponentValue', value: decodedText}, '*');
                 }
-                let html5QrcodeScanner = new Html5QrcodeScanner(
-                    "reader", { 
-                        fps: 10, 
-                        qrbox: { width: 200, height: 200 },
-                        facingMode: "environment" 
-                    }, false);
-                html5QrcodeScanner.render(onScanSuccess, (err) => {});
+                
+                let html5QrCode = new Html5Qrcode("reader");
+                html5QrCode.start(
+                    { facingMode: { exact: "environment" } }, 
+                    { fps: 10, qrbox: { width: 200, height: 200 } },
+                    onScanSuccess,
+                    (errorMessage) => {
+                        // Fallback auf allgemeine Rückkamera falls 'exact' nicht unterstützt wird
+                        html5QrCode.start(
+                            { facingMode: "environment" },
+                            { fps: 10, qrbox: { width: 200, height: 200 } },
+                            onScanSuccess,
+                            (err) => {}
+                        );
+                    }
+                ).catch((err) => {
+                    console.error("Kamera-Start fehlgeschlagen", err);
+                });
             </script>
             """
             components.html(scanner_html, height=360)

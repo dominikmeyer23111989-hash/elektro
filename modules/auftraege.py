@@ -71,8 +71,10 @@ def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste):
         k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}"
         k_tel = kunde.get('telefon', '-')
         pdf.cell(0, 6, clean_text(f"Kunde: {k_name} (Tel: {k_tel})"), new_x="LMARGIN", new_y="NEXT")
+    elif a.get('freitext_kunde'):
+        pdf.cell(0, 6, clean_text(f"Kunde (Manuell): {a.get('freitext_kunde')}"), new_x="LMARGIN", new_y="NEXT")
     else:
-        pdf.cell(0, 6, clean_text("Kunde: Spontanauftrag / Ohne Kundenzuordnung"), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, clean_text("Kunde: Kein Kunde angegeben"), new_x="LMARGIN", new_y="NEXT")
     
     if gebaeude:
         g_adr = f"{gebaeude.get('strasse')} {gebaeude.get('hausnummer')}, {gebaeude.get('ort')}"
@@ -80,10 +82,11 @@ def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste):
         pdf.cell(0, 6, clean_text(f"Objektadresse: {g_code}{g_adr}"), new_x="LMARGIN", new_y="NEXT")
         if a.get('mieter_we'):
             pdf.cell(0, 6, clean_text(f"Betroffene WE / Mieter: {a.get('mieter_we')}"), new_x="LMARGIN", new_y="NEXT")
+    elif a.get('freitext_ort'):
+        pdf.cell(0, 6, clean_text(f"Auftragsort (Manuell): {a.get('freitext_ort')}"), new_x="LMARGIN", new_y="NEXT")
     else:
-        pdf.cell(0, 6, clean_text("Objektadresse: Direkt im Auftrag angegeben"), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, clean_text("Objektadresse: Keine Adresse angegeben"), new_x="LMARGIN", new_y="NEXT")
     
-    # Team & Fahrzeug
     team_names = ", ".join([f"{m.get('vorname', '')} {m.get('nachname', '')}" for m in team_liste]) if team_liste else "Kein Team zugewiesen"
     pdf.cell(0, 6, clean_text(f"Einsatz-Team (Monteure / Azubis): {team_names}"), new_x="LMARGIN", new_y="NEXT")
 
@@ -137,7 +140,7 @@ def render_auftraege_verwaltung(supabase):
         gebaeude_liste = []
 
     try:
-        f_res = supabase.table("fahrzeuge").select("id, marke, modell, kennzeichen").execute()
+        f_res = supabase.table("fahrzeuge").select("*").execute()
         fahrzeuge_liste = f_res.data or []
     except Exception:
         fahrzeuge_liste = []
@@ -148,7 +151,6 @@ def render_auftraege_verwaltung(supabase):
     except Exception:
         mitarbeiter_liste = []
 
-    # Verfügbare Mitarbeiter (Prüfung ob krank/Urlaub)
     verfuegbare_mitarbeiter = []
     heute_str = datetime.now().strftime("%Y-%m-%d")
 
@@ -171,7 +173,6 @@ def render_auftraege_verwaltung(supabase):
     with tabs[0]:
         st.subheader("Auftragsliste")
 
-        # Zugeordnete Mitarbeiter pro Auftrag laden
         sichtbare_auftraege = []
         for a in auftraege_liste:
             try:
@@ -183,11 +184,9 @@ def render_auftraege_verwaltung(supabase):
             a["team"] = team_mitglieder
             status = a.get("status", "In Planung")
 
-            # FILTER: Wenn Monteur (kein Admin), dürfen Aufträge "In Planung" nicht angezeigt werden!
             if not is_admin:
                 if status == "In Planung":
                     continue
-                # Prüfen ob eingeloggter User im Team ist
                 user_in_team = any(m["id"] == user_id for m in team_mitglieder)
                 if not user_in_team:
                     continue
@@ -203,7 +202,6 @@ def render_auftraege_verwaltung(supabase):
                 fahrzeug = a.get("fahrzeuge") or {}
                 team = a.get("team", [])
 
-                # Status Icons & Farben
                 status = a.get("status", "In Planung")
                 status_icons = {
                     "In Planung": "⏳",
@@ -213,10 +211,13 @@ def render_auftraege_verwaltung(supabase):
                 }
                 status_icon = status_icons.get(status, "⚪")
 
-                k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}".strip() or "Spontanauftrag"
-                g_adr = f"{gebaeude.get('strasse', '')} {gebaeude.get('hausnummer', '')}, {gebaeude.get('ort', '')}" if gebaeude else "Kein Objekt"
+                k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}".strip() or a.get("freitext_kunde") or "Spontanauftrag"
+                g_adr = f"{gebaeude.get('strasse', '')} {gebaeude.get('hausnummer', '')}, {gebaeude.get('ort', '')}" if gebaeude else a.get("freitext_ort") or "Kein Objekt"
                 team_names = ", ".join([f"{m['vorname']} {m['nachname']}" for m in team]) or "Kein Team zugewiesen"
-                f_info = f"{fahrzeug.get('marke', '')} {fahrzeug.get('modell', '')} ({fahrzeug.get('kennzeichen', '')})" if fahrzeug else "Kein Fahrzeug"
+                
+                f_marke = fahrzeug.get('marke') or fahrzeug.get('titel') or 'Fahrzeug'
+                f_kennz = fahrzeug.get('kennzeichen') or ''
+                f_info = f"{f_marke} ({f_kennz})" if f_kennz else f_marke
 
                 with st.expander(f"{status_icon} [{a.get('auftragsnummer')}] Status: {status} | Kunde: {k_name} | Team: {team_names}"):
                     a_datum_de = format_de_datum(a.get('termin_um'))
@@ -262,7 +263,7 @@ def render_auftraege_verwaltung(supabase):
                             neues_fahrzeug = st.selectbox(
                                 "Fahrzeug zuweisen (optional)",
                                 options=fahrzeug_optionen,
-                                format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f['marke']} {f['modell']} ({f['kennzeichen']})" for f in fahrzeuge_liste if f["id"] == x), ""),
+                                format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f.get('marke', f.get('titel', 'Fahrzeug'))} ({f.get('kennzeichen', '')})" for f in fahrzeuge_liste if f["id"] == x), ""),
                                 index=fahrzeug_optionen.index(a.get("fahrzeug_id")) if a.get("fahrzeug_id") in fahrzeug_optionen else 0
                             )
 
@@ -270,7 +271,6 @@ def render_auftraege_verwaltung(supabase):
 
                         if b_save:
                             try:
-                                # Update Basisdaten
                                 update_payload = {
                                     "status": neuer_status,
                                     "benoetigtes_material": verbrauchtes_material
@@ -280,7 +280,6 @@ def render_auftraege_verwaltung(supabase):
 
                                 supabase.table("auftraege").update(update_payload).eq("id", a["id"]).execute()
 
-                                # Team aktualisieren falls Admin
                                 if is_admin:
                                     supabase.table("auftrag_mitarbeiter").delete().eq("auftrag_id", a["id"]).execute()
                                     if neues_team:
@@ -311,19 +310,23 @@ def render_auftraege_verwaltung(supabase):
                 with col1:
                     n_auftragsnummer = st.text_input("Auftragsnummer *", value=f"A-{datetime.now().strftime('%Y%m%d')}-01")
                     
+                    # Flexibler Kunde: Entweder aus Liste oder Freitext
                     kunden_optionen = [None] + [k["id"] for k in kunden_liste]
                     n_kunde = st.selectbox(
-                        "Auftraggeber (Kunde) – Optional",
+                        "Auftraggeber (Kunde aus Modul wählen)",
                         options=kunden_optionen,
-                        format_func=lambda x: "--- Kein Kunde / Spontanauftrag ---" if x is None else next((f"{k['nachname']}, {k['vorname']} ({k.get('firma', 'Privat')})" for k in kunden_liste if k["id"] == x), "")
+                        format_func=lambda x: "--- Anderer / Spontankunde (Freitext unten) ---" if x is None else next((f"{k['nachname']}, {k['vorname']} ({k.get('firma', 'Privat')})" for k in kunden_liste if k["id"] == x), "")
                     )
+                    n_freitext_kunde = st.text_input("Oder Spontankunde / Name & Telefon (Freitext)", placeholder="z.B. Herr Müller, Tel: 0171-1234567")
 
+                    # Flexibler Auftragsort: Entweder aus Gebäude-Modul oder Freitext
                     gebaeude_optionen = [None] + [g["id"] for g in gebaeude_liste]
                     n_gebaeude = st.selectbox(
-                        "Auftragsort (Gebäude / Objekt) – Optional",
+                        "Auftragsort (Gebäude / Objekt wählen)",
                         options=gebaeude_optionen,
-                        format_func=lambda x: "--- Kein Objekt ---" if x is None else next((f"[{g.get('gebaeude_code', 'Kein Code')}] {g['strasse']} {g['hausnummer']}, {g['ort']}" for g in gebaeude_liste if g["id"] == x), "")
+                        format_func=lambda x: "--- Alternative Anschrift (Freitext unten) ---" if x is None else next((f"[{g.get('gebaeude_code', 'Kein Code')}] {g['strasse']} {g['hausnummer']}, {g['ort']}" for g in gebaeude_liste if g["id"] == x), "")
                     )
+                    n_freitext_ort = st.text_input("Oder alternativer Auftragsort (Freitext)", placeholder="z.B. Bahnhofstraße 10, 44787 Bochum")
 
                     n_mieter_we = st.text_input("Mieter / WE / Etage (optional)", placeholder="z.B. WE 4, 2. Obergeschoss links")
                     
@@ -345,7 +348,7 @@ def render_auftraege_verwaltung(supabase):
                     n_fahrzeug = st.selectbox(
                         "Fahrzeug zuweisen (optional)",
                         options=fahrzeug_optionen,
-                        format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f['marke']} {f['modell']} ({f['kennzeichen']})" for f in fahrzeuge_liste if f["id"] == x), "")
+                        format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f.get('marke', f.get('titel', 'Fahrzeug'))} ({f.get('kennzeichen', '')})" for f in fahrzeuge_liste if f["id"] == x), "")
                     )
                     
                     st.write("Termindaten & Auftragsdatum")
@@ -372,7 +375,9 @@ def render_auftraege_verwaltung(supabase):
                             auftrag_payload = {
                                 "auftragsnummer": n_auftragsnummer,
                                 "kunde_id": n_kunde,
+                                "freitext_kunde": n_freitext_kunde if not n_kunde else None,
                                 "gebaeude_id": n_gebaeude,
+                                "freitext_ort": n_freitext_ort if not n_gebaeude else None,
                                 "fahrzeug_id": n_fahrzeug,
                                 "arbeiten": n_arbeiten,
                                 "mieter_we": n_mieter_we,
@@ -383,7 +388,6 @@ def render_auftraege_verwaltung(supabase):
                             }
                             res = supabase.table("auftraege").insert(auftrag_payload).execute()
                             
-                            # Wenn erfolgreich, Verknüpfungstabelle für das Team füllen
                             if res.data:
                                 neu_id = res.data[0]["id"]
                                 team_inserts = [{"auftrag_id": neu_id, "mitarbeiter_id": m_id} for m_id in n_team]

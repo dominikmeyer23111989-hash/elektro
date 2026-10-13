@@ -355,7 +355,7 @@ def render_auftraege_verwaltung(supabase):
                                 except Exception as e:
                                     st.error(f"Fehler: {e}")
 
-                   # --- DIGITALE UNTERSCHRIFTEN ---
+                    # --- DIGITALE UNTERSCHRIFTEN ---
                     st.markdown("---")
                     st.write("✍️ **Digitale Unterschriften (Abnahmeprotokoll)**")
                     
@@ -371,7 +371,7 @@ def render_auftraege_verwaltung(supabase):
                             height=100,
                             width=300,
                             drawing_mode="freedraw",
-                            return_image_data=True, # <--- HIER AKTIVIERT
+                            return_image_data=True,
                             key=f"canvas_kunde_{a['id']}"
                         )
                         if st.button("💾 Kunde Unterschrift speichern", key=f"btn_save_kunde_{a['id']}"):
@@ -402,37 +402,7 @@ def render_auftraege_verwaltung(supabase):
                             height=100,
                             width=300,
                             drawing_mode="freedraw",
-                            return_image_data=True, # <--- HIER AKTIVIERT
-                            key=f"canvas_ma_{a['id']}"
-                        )
-                        if st.button("💾 Monteur Unterschrift speichern", key=f"btn_save_ma_{a['id']}"):
-                            if canvas_ma.json_data is not None and len(canvas_ma.json_data.get("objects", [])) > 0:
-                                try:
-                                    img = Image.fromarray(canvas_ma.image_data.astype('uint8'), 'RGBA')
-                                    rgb_img = Image.new("RGB", img.size, (255, 255, 255))
-                                    rgb_img.paste(img, mask=img.split()[3])
-                                    buffered = BytesIO()
-                                    rgb_img.save(buffered, format="PNG")
-                                    sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
-                                    
-                                    supabase.table("auftraege").update({"mitarbeiter_unterschrift": sig_base64}).eq("id", a["id"]).execute()
-                                    st.success("Monteurunterschrift erfolgreich gespeichert!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Fehler beim Speichern: {e}")
-                            else:
-                                st.warning("⚠️ Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
-
-                    with col_sig2:
-                        st.markdown("Unterschrift Monteur / Team")
-                        canvas_ma = st_canvas(
-                            fill_color="rgba(255, 165, 0, 0.3)",
-                            stroke_width=2,
-                            stroke_color="#000000",
-                            background_color="#FFFFFF",
-                            height=100,
-                            width=300,
-                            drawing_mode="freedraw",
+                            return_image_data=True,
                             key=f"canvas_ma_{a['id']}"
                         )
                         if st.button("💾 Monteur Unterschrift speichern", key=f"btn_save_ma_{a['id']}"):

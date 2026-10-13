@@ -36,6 +36,8 @@ if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "user_data" not in st.session_state:
     st.session_state["user_data"] = None
+if "show_profil" not in st.session_state:
+    st.session_state["show_profil"] = False
 
 # -----------------------------------------------------------------------------
 # 2. Login- & Passwort-Wiederherstellungs-System
@@ -248,7 +250,7 @@ def render_mein_profil(supabase):
                         st.error("Das eingegebene aktuelle Passwort ist falsch.")
 
 # -----------------------------------------------------------------------------
-# 4. Hauptanwendung & Routing (Neu angeordnete Sidebar)
+# 4. Hauptanwendung & Routing (Optimierte Sidebar-Anordnung)
 # -----------------------------------------------------------------------------
 def render_app():
     user = st.session_state.get("user_data")
@@ -266,7 +268,7 @@ def render_app():
     st.sidebar.write(f"**{full_name}**")
     st.sidebar.caption(f"Nr: {user.get('mitarbeiternummer', '-')} | Rolle: {user.get('rolle', '-')}")
     
-    # --- 1. Live Stempelfunktion ---
+    # --- 1. Schnell-Zeiterfassung (Weit oben) ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### ⏱️ Schnell-Zeiterfassung")
 
@@ -316,41 +318,48 @@ def render_app():
                 except Exception as e:
                     st.error(f"Fehler: {e}")
 
-    # --- 2. Menüauswahl direkt unter der Stempeluhr ---
+    # --- 2. Hauptmenü / Modulauswahl (Direkt darunter, damit es hoch sitzt) ---
     st.sidebar.markdown("---")
-    menu_selection = st.sidebar.radio(
-        "Navigation",
-        options=["🏠 Module & Hauptmenü", "👤 Mein Profil & Einstellungen"]
-    )
+    st.sidebar.markdown("#### 📂 Hauptmenü")
 
-    # --- 3. Flotten- & TÜV-Warnungen (unterhalb der Navigation) ---
+    extended_modules = {**ALL_MODULES, "6": "6. Fahrzeugflotte & Mängel", "10": "10. Steuerberater-Export"}
+    allowed_menu_keys = user.get("rechte", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
+    available_menus = {k: v for k, v in extended_modules.items() if k in allowed_menu_keys}
+
+    if not available_menus:
+        st.sidebar.warning("Noch keine zugewiesenen Menürechte gefunden.")
+        selected_main = None
+    else:
+        selected_main = st.sidebar.selectbox(
+            "Modul auswählen",
+            options=list(available_menus.keys()),
+            format_func=lambda x: available_menus[x],
+            label_visibility="collapsed"
+        )
+
+    # --- 3. Flotten- & TÜV-Warnungen ---
     render_fahrzeug_warnungen_sidebar(supabase)
 
-    # --- 4. Ganz unten: Profil-Einstellungen & Abmelden-Button ---
+    # --- 4. Unten: Profil-Einstellungen & Abmelden-Button ---
     st.sidebar.markdown("---")
+    
+    if st.sidebar.button("👤 Mein Profil & Einstellungen", use_container_width=True):
+        st.session_state["show_profil"] = True
+        st.rerun()
+
     if st.sidebar.button("🚪 Abmelden", use_container_width=True):
         st.session_state["authenticated"] = False
         st.session_state["user_data"] = None
+        st.session_state["show_profil"] = False
         st.rerun()
 
-    # --- Routing ---
-    if menu_selection == "👤 Mein Profil & Einstellungen":
+    # --- Routing im Hauptbereich ---
+    if st.session_state.get("show_profil", False):
+        if st.button("⬅️ Zurück zum Hauptmenü"):
+            st.session_state["show_profil"] = False
+            st.rerun()
         render_mein_profil(supabase)
     else:
-        extended_modules = {**ALL_MODULES, "6": "6. Fahrzeugflotte & Mängel", "10": "10. Steuerberater-Export"}
-        allowed_menu_keys = user.get("rechte", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
-        available_menus = {k: v for k, v in extended_modules.items() if k in allowed_menu_keys}
-
-        if not available_menus:
-            st.warning("Noch keine zugewiesenen Menürechte gefunden. Bitte wenden Sie sich an den Administrator.")
-            return
-
-        selected_main = st.sidebar.selectbox(
-            "Hauptmenü",
-            options=list(available_menus.keys()),
-            format_func=lambda x: available_menus[x]
-        )
-
         if selected_main:
             if selected_main == "1":
                 render_mitarbeiter_verwaltung(supabase)

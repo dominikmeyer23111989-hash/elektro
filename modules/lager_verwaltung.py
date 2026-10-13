@@ -16,7 +16,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Live-Kamera, Multibuchungs-Warenkorb & Direkte QR-Anzeige.")
+    st.caption("High-Speed Lager: Rückkamera-Live-Scan, Multibuchungs-Warenkorb & Direkte QR-Anzeige.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -31,7 +31,6 @@ def render_lager_verwaltung(supabase):
     except Exception:
         material_liste = []
 
-    # Session-State für den Multibuchungs-Warenkorb initialisieren
     if "multibuchung_liste" not in st.session_state:
         st.session_state["multibuchung_liste"] = []
 
@@ -90,20 +89,20 @@ def render_lager_verwaltung(supabase):
             else:
                 st.warning("Keine Artikel gefunden.")
 
-    # --- TAB 2: MULTIBUCHUNG & SCHNELL-SCAN (WARENKORB-PRINZIP) ---
+    # --- TAB 2: MULTIBUCHUNG & SCHNELL-SCAN (RÜCKKAMERA AKTIVIERT) ---
     with tabs[1]:
         st.subheader("⚡ Multibuchung (Mehrere Artikel scannen & gesammelt buchen)")
-        st.caption("Fügen Sie nacheinander Artikel per Code oder Suche hinzu und buchen Sie alles auf einmal ab – ganz ohne Neuladen.")
+        st.caption("Fügen Sie nacheinander Artikel per Code oder Suche hinzu und buchen Sie alles auf einmal ab.")
 
         if not material_liste:
-            st.warning("Noch keine Artikel im Lager vorhanden.")
+            st.warning("Keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            # Live-Kamera Scanner HTML Komponente
+            # HTML5 Scanner fix auf Rückkamera (environment) eingestellt
             scanner_html = """
             <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; text-align: center;">
-                <p style="margin: 0; font-size: 14px; font-weight: bold;">📷 Live-Kamera Scanner</p>
+                <p style="margin: 0; font-size: 14px; font-weight: bold;">📷 Live-Rückkamera Scanner</p>
                 <div id="reader" style="width: 100%; max-width: 350px; margin: auto;"></div>
             </div>
             <script src="https://unpkg.com/html5-qrcode"></script>
@@ -112,7 +111,11 @@ def render_lager_verwaltung(supabase):
                     window.parent.postMessage({type: 'streamlit:setComponentValue', value: decodedText}, '*');
                 }
                 let html5QrcodeScanner = new Html5QrcodeScanner(
-                    "reader", { fps: 10, qrbox: { width: 200, height: 200 } }, false);
+                    "reader", { 
+                        fps: 10, 
+                        qrbox: { width: 200, height: 200 },
+                        facingMode: "environment" 
+                    }, false);
                 html5QrcodeScanner.render(onScanSuccess, (err) => {});
             </script>
             """
@@ -124,7 +127,6 @@ def render_lager_verwaltung(supabase):
             with col_add2:
                 buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"])
 
-            # Artikel über Code oder Direktsuche finden
             aktueller_treffer = None
             if eingabe_code:
                 aktueller_treffer = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(eingabe_code).strip().lower()), None)
@@ -137,7 +139,6 @@ def render_lager_verwaltung(supabase):
                     label_m = st.selectbox("Treffer", options=[f"{m['bezeichnung']} | Ort: {m.get('lagerort')} | Bestand: {m['ist_bestand']}" for m in passende_m])
                     aktueller_treffer = next((m for m in passende_m if f"{m['bezeichnung']} | Ort: {m.get('lagerort')} | Bestand: {m['ist_bestand']}" == label_m), None)
 
-            # Artikel anzeigen mit QR-Code und Button zum Warenkorb hinzufügen
             if aktueller_treffer:
                 st.markdown("---")
                 col_i1, col_i2, col_i3 = st.columns([2, 2, 1])
@@ -149,7 +150,6 @@ def render_lager_verwaltung(supabase):
                     st.write(f"📊 **Bestand:** {aktueller_treffer.get('ist_bestand', 0)} {aktueller_treffer.get('einheit', 'Stk.')}")
                 
                 with col_i2:
-                    # Direkte Anzeige des QR-Codes für diesen Artikel
                     code_val = str(aktueller_treffer.get('artikelnummer', ''))
                     if code_val:
                         st.write("**Produkt-QR-Code:**")
@@ -167,7 +167,6 @@ def render_lager_verwaltung(supabase):
                 with col_i3:
                     menge_hinzu = st.number_input("Menge", min_value=1, value=1, step=1, key="menge_multi_add")
                     if st.button("➕ In Warenkorb", type="primary", use_container_width=True):
-                        # Zum Warenkorb hinzufügen
                         st.session_state["multibuchung_liste"].append({
                             "id": aktueller_treffer['id'],
                             "bezeichnung": aktueller_treffer['bezeichnung'],
@@ -181,7 +180,7 @@ def render_lager_verwaltung(supabase):
                         st.toast(f"✅ {aktueller_treffer['bezeichnung']} in den Warenkorb gelegt!", icon="🛒")
                         st.rerun()
 
-            # --- WARENKORB ANZEIGE & GESAMTABSCHLUSS ---
+            # Warenkorb & Gesamtabschluss
             st.markdown("---")
             st.subheader("🛒 Aktuelle Scan-Liste (Warenkorb)")
 
@@ -203,10 +202,8 @@ def render_lager_verwaltung(supabase):
                                 ist_zugang = "Zugang" in item["art"]
                                 neuer_b = alter_b + menge_b if ist_zugang else max(0, alter_b - menge_b)
 
-                                # Bestand in Supabase aktualisieren
                                 supabase.table("lager_material").update({"ist_bestand": neuer_b}).eq("id", item["id"]).execute()
                                 
-                                # Bewegung protokollieren
                                 supabase.table("lager_bewegungen").insert({
                                     "material_id": item["id"],
                                     "art": "Einbuchung" if ist_zugang else "Ausbuchung",
@@ -215,7 +212,7 @@ def render_lager_verwaltung(supabase):
                                 }).execute()
 
                             st.session_state["multibuchung_liste"] = []
-                            st.toast("🎉 Alle Buchungen erfolgreich im System gespeichert!", icon="🎯")
+                            st.toast("🎉 Alle Buchungen erfolgreich gespeichert!", icon="🎯")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler beim Buchen: {e}")
@@ -228,8 +225,6 @@ def render_lager_verwaltung(supabase):
     # --- TAB 3: ETIKETTEN DRUCKEN (QR & BARCODE) ---
     with tabs[2]:
         st.subheader("🖨️ Etiketten für Regale & Kartons drucken")
-        st.caption("Drucken Sie QR-Codes und Barcodes aus und kleben Sie diese an die Lagerorte.")
-
         if not material_liste:
             st.warning("Keine Artikel vorhanden.")
         else:
@@ -289,7 +284,7 @@ def render_lager_verwaltung(supabase):
                     n_kategorie = st.selectbox("Kategorie", ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug"])
                 with col_a2:
                     n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])
-                    n_lagerort = st.text_input("📍 Lagerort / Regal (wichtig für Suche)", placeholder="z.B. Regal A1, Fach 3")
+                    n_lagerort = st.text_input("📍 Lagerort / Regal", placeholder="z.B. Regal A1, Fach 3")
                     
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:

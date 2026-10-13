@@ -99,10 +99,11 @@ def render_lager_verwaltung(supabase):
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            # Stabiler JavaScript-Scanner mit direktem Ausgabefeld & Button
+            # Robuster Scanner mit explizitem Start-Button zur Umgehung von Browser-Sicherheitsblockaden
             scanner_html = """
             <div style="background-color: #f0f2f6; padding: 12px; border-radius: 10px; text-align: center; font-family: sans-serif;">
                 <p style="margin: 0 0 8px 0; font-size: 15px; font-weight: bold; color: #31333F;">📷 Live-Rückkamera Scanner</p>
+                <button onclick="startScanner()" style="background-color: #007BFF; color: white; border: none; padding: 10px 20px; font-size: 14px; font-weight: bold; border-radius: 6px; cursor: pointer; margin-bottom: 10px;">🚀 Kamera-Scanner starten</button>
                 <div id="reader" style="width: 100%; max-width: 320px; margin: auto; border-radius: 8px; overflow: hidden;"></div>
                 <div id="result-box" style="margin-top: 12px; display: none; background: white; padding: 10px; border-radius: 6px; border: 2px solid #00C853;">
                     <p style="margin: 0; font-size: 12px; color: #666;">Erfasster Code:</p>
@@ -113,6 +114,22 @@ def render_lager_verwaltung(supabase):
             <script src="https://unpkg.com/html5-qrcode"></script>
             <script>
                 let lastScannedCode = "";
+                let html5QrcodeScanner = null;
+
+                function startScanner() {
+                    if (html5QrcodeScanner) {
+                        return; // Läuft bereits
+                    }
+                    html5QrcodeScanner = new Html5QrcodeScanner(
+                        "reader", { 
+                            fps: 10, 
+                            qrbox: { width: 220, height: 220 },
+                            facingMode: "environment" 
+                        }, false);
+                    
+                    html5QrcodeScanner.render(onScanSuccess, (err) => {});
+                }
+
                 function onScanSuccess(decodedText, decodedResult) {
                     if (decodedText !== lastScannedCode) {
                         lastScannedCode = decodedText;
@@ -120,19 +137,8 @@ def render_lager_verwaltung(supabase):
                         document.getElementById('result-box').style.display = 'block';
                     }
                 }
-                
-                let html5QrCode = new Html5Qrcode("reader");
-                html5QrCode.start(
-                    { facingMode: "environment" }, 
-                    { fps: 10, qrbox: { width: 220, height: 220 } },
-                    onScanSuccess,
-                    (errorMessage) => {}
-                ).catch((err) => {
-                    console.error("Kamera konnte nicht gestartet werden", err);
-                });
 
                 function copyToStreamlit() {
-                    // Code ins Streamlit Eingabefeld übertragen über URL/Event
                     const inputField = window.parent.document.querySelector('input[aria-label*="Code scannen"]');
                     if (inputField) {
                         inputField.value = lastScannedCode;
@@ -142,7 +148,7 @@ def render_lager_verwaltung(supabase):
                 }
             </script>
             """
-            components.html(scanner_html, height=430)
+            components.html(scanner_html, height=480)
 
             col_add1, col_add2 = st.columns([2, 1])
             with col_add1:
@@ -380,7 +386,7 @@ def render_lager_verwaltung(supabase):
                         except Exception as e:
                             st.error(f"Fehler: {e}")
                     else:
-                        st.error("Keine Berechtigung.")
+                        st.error("Noch keine Berechtigung.")
 
                 if btn_loeschen:
                     if darf_loeschen:
@@ -406,43 +412,4 @@ def render_lager_verwaltung(supabase):
                 for m in material_liste:
                     col1, col2, col3 = st.columns([3, 2, 2])
                     with col1:
-                        st.write(f"**{m.get('bezeichnung')}** | 📍 `{m.get('lagerort', 'Kein Ort')}`")
-                    with col2:
-                        st.write(f"Soll: **{m.get('ist_bestand', 0)}**")
-                    with col3:
-                        gezahlt = st.number_input("Ist", min_value=0, value=int(m.get('ist_bestand', 0)), key=f"inv_{m['id']}", label_visibility="collapsed")
-                        inventur_daten[m['id']] = gezahlt
-                    st.divider()
-
-                if st.form_submit_button("✅ Inventur finalisieren", type="primary", use_container_width=True):
-                    try:
-                        for mat_id, neuer_ist in inventur_daten.items():
-                            supabase.table("lager_material").update({"ist_bestand": neuer_ist}).eq("id", mat_id).execute()
-                        st.toast("Inventur erfolgreich abgeschlossen!", icon="🎯")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Fehler: {e}")
-
-    # --- CSV-IMPORT ---
-    with tabs[6]:
-        st.subheader("📥 Massen-Import (CSV)")
-        uploaded_file = st.file_uploader("CSV-Datei auswählen", type=["csv"])
-        if uploaded_file is not None:
-            try:
-                df_import = pd.read_csv(uploaded_file)
-                st.write("Vorschau:", df_import.head())
-                if st.button("🚀 Importieren", type="primary"):
-                    for _, row in df_import.iterrows():
-                        supabase.table("lager_material").insert({
-                            "artikelnummer": str(row.get('artikelnummer', '')),
-                            "bezeichnung": str(row.get('bezeichnung', 'Unbekannt')),
-                            "kategorie": str(row.get('kategorie', 'Allgemein')),
-                            "einheit": str(row.get('einheit', 'Stk.')),
-                            "soll_bestand": int(row.get('soll_bestand', 5)),
-                            "ist_bestand": int(row.get('ist_bestand', 0)),
-                            "lagerort": str(row.get('lagerort', 'Hauptlager'))
-                        }).execute()
-                    st.toast("Erfolgreich importiert!", icon="🎉")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Fehler: {e}")
+                        st.write(f"**{m.get('bezeichnung')}** | 📍 `{m.get

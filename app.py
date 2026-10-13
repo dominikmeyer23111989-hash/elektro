@@ -366,10 +366,10 @@ def render_app():
                 st.title(available_menus[selected_main])
                 st.info("Dieses Modul wird als Nächstes ausgebaut.")
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------
 # Kontrollfluss
-# -----------------------------------------------------------------------------
-if not solange := not st.session_state.get("authenticated", False):
+# ---------------------------------------------------
+if not st.session_state.get("authenticated", False):
     render_login()
 else:
     render_app()

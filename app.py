@@ -337,6 +337,7 @@ def render_app():
         "4": "4. Aufträge & Einsätze",
         "6": "6. Fahrzeugflotte & Mängel", 
         "7": "7. Gebäude & Liegenschaften", 
+        "8": "8. TV-Live-Leitsystem",
         "10": "10. Steuerberater-Export"
     }
     allowed_menu_keys = user.get("rechte", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
@@ -389,6 +390,8 @@ def render_app():
                 render_fahrzeug_verwaltung(supabase)
             elif selected_main == "7":
                 render_gebaeude_verwaltung(supabase)
+            elif selected_main == "8":
+                render_tv_dashboard(supabase)
             elif selected_main == "10":
                 render_steuerberater_export(supabase)
             else:

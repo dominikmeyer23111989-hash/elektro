@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import io
-
 
 def hat_recht(modul_id, aktion="sehen"):
     """Prüft über die app.py-Logik, ob das Recht vorliegt."""
@@ -14,7 +12,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("Multifunktionales Lager: Barcode-Scan, Kamera-Erkennung, Massen-CSV-Import & manuelle Verwaltung.")
+    st.caption("Multifunktionales Lager: Barcode-Scanner, Kamera-Erfassung, CSV-Massenimport & manuelle Verwaltung.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -31,8 +29,8 @@ def render_lager_verwaltung(supabase):
 
     tabs = st.tabs([
         "📊 Bestandsübersicht", 
-        "⚡ Schnell-Buchung & Scanner", 
-        "📷 Kamera & Barcode-Erfassung", 
+        "⚡ Schnell-Buchung & Barcode", 
+        "📷 Kamera & Foto-Erfassung", 
         "📥 CSV-Massenimport", 
         "📋 Inventur", 
         "➕ Artikel anlegen"
@@ -82,26 +80,25 @@ def render_lager_verwaltung(supabase):
             else:
                 st.warning("Keine Artikel gefunden.")
 
-    # --- TAB 2: SCHNELL-BUCHUNG & HANDSCANNER ---
+    # --- TAB 2: SCHNELL-BUCHUNG & BARCODE ---
     with tabs[1]:
-        st.subheader("⚡ Schnelle Ein- / Ausbuchung (auch per Handscanner)")
-        st.caption("Tippen Sie die Artikelnummer ein oder nutzen Sie einen USB-/Bluetooth-Handscanner direkt im Feld.")
+        st.subheader("⚡ Schnelle Ein- / Ausbuchung per Barcode oder Auswahl")
+        st.caption("Nutzen Sie einen Handscanner oder tippen Sie die Artikelnummer ein.")
 
         if not material_liste:
             st.warning("Keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            # Schnelleingabe via Barcode-Handscanner (Fokus im Textfeld)
-            scanned_code = st.text_input("🔍 Barcode / Artikelnummer scannen oder eingeben", placeholder="Scanner hierher richten...")
+            scanned_code = st.text_input("🔍 Artikelnummer / Barcode scannen", placeholder="Scanner hierher richten oder Code eingeben...")
 
             selected_artikel = None
             if scanned_code:
                 selected_artikel = next((m for m in material_liste if str(m.get('artikelnummer')) == str(scanned_code)), None)
                 if selected_artikel:
-                    st.success(f"Gefunden: **{selected_artikel['bezeichnung']}** (Aktuell: {selected_artikel['ist_bestand']} {selected_artikel.get('einheit', 'Stk.')})")
+                    st.success(f"Gefunden: **{selected_artikel['bezeichnung']}** (Aktueller Bestand: {selected_artikel['ist_bestand']} {selected_artikel.get('einheit', 'Stk.')})")
                 else:
-                    st.warning(f"Kein Artikel mit Code '{scanned_code}' gefunden.")
+                    st.warning(f"Kein Artikel mit Code '{scanned_code}' im System gefunden.")
 
             with st.form("schnell_buchung_form"):
                 if not selected_artikel:
@@ -112,7 +109,6 @@ def render_lager_verwaltung(supabase):
                 else:
                     aktiver_artikel = selected_artikel
                     selected_id = selected_artikel['id']
-                    st.hidden_input = st.text_input("ID", value=selected_id, disabled=True, label_visibility="collapsed")
 
                 buchungs_art = st.radio("Buchungsart *", ["📥 Einbuchung (Zugang)", "📤 Ausbuchung (Entnahme)"], horizontal=True)
                 menge = st.number_input("Menge *", min_value=1, value=1, step=1)
@@ -140,35 +136,19 @@ def render_lager_verwaltung(supabase):
                         except Exception as e:
                             st.error(f"Fehler: {e}")
 
-    # --- TAB 3: KAMERA & BARCODE-ERFASSUNG ---
+    # --- TAB 3: KAMERA & FOTO-ERFASSUNG ---
     with tabs[2]:
-        st.subheader("📷 Mobile Kamera & Live-Barcode-Scanner")
-        st.caption("Nutzen Sie Ihre Handykamera, um Barcodes von Verpackungen live zu scannen oder Materialfotos für die Erfassung zu machen.")
+        st.subheader("📷 Mobile Kamera & Foto-Dokumentation")
+        st.caption("Machen Sie mit Ihrem Smartphone direkt ein Foto vom Material oder Typenschild, um es im Lager zu dokumentieren.")
 
-        scan_modus = st.radio("Erfassungsart", ["Live-Barcode scannen (Handykamera)", "Foto von Material / Typenschild machen"], horizontal=True)
-
-        if scan_modus == "Live-Barcode scannen (Handykamera)":
-            st.info("Halten Sie die Kamera auf den Strichcode des Artikels.")
-            # Startet den Web-Zxing Barcode-Scanner
-            barcode = st_zxing()
-            if barcode:
-                st.success(f"Ercannter Barcode / Code: **{barcode}**")
-                # Prüfen, ob Artikel existiert
-                match = next((m for m in material_liste if str(m.get('artikelnummer')) == str(barcode)), None)
-                if match:
-                    st.write(f"📦 Artikel im System gefunden: **{match['bezeichnung']}** (Bestand: {match['ist_bestand']})")
-                else:
-                    st.warning("Dieser Barcode ist noch nicht im System. Sie können ihn direkt im Reiter 'Artikel anlegen' mit diesem Code speichern!")
-        else:
-            # Foto-Upload / Kameraaufnahme
-            foto = st.camera_input("Machen Sie ein Foto vom Material oder Karton")
-            if foto:
-                st.image(foto, caption="Aufgenommenes Materialfoto", width=300)
-                st.info("💡 Tipp: Das Foto ist gesichert. Nutzen Sie die Artikelbezeichnung aus dem Foto, um den Artikel im Reiter 'Artikel anlegen' hinzuzufügen.")
+        foto = st.camera_input("Foto aufnehmen")
+        if foto:
+            st.image(foto, caption="Aufgenommenes Materialfoto", width=350)
+            st.success("✅ Foto erfolgreich aufgenommen und im Arbeitsspeicher hinterlegt.")
 
     # --- TAB 4: CSV-MASSENIMPORT ---
     with tabs[3]:
-        st.subheader("📥 Massen-Import (CSV / Excel)")
+        st.subheader("📥 Massen-Import (CSV)")
         st.caption("Laden Sie eine CSV-Liste hoch, um hunderte Artikel auf einmal in das Lager einzupflegen.")
 
         st.markdown("""
@@ -183,7 +163,7 @@ def render_lager_verwaltung(supabase):
                 df_import = pd.read_csv(uploaded_file)
                 st.write("Vorschau der importierten Daten:", df_import.head())
 
-                if st.button("🚀 Alle Artikel aus CSV in die Datenbank importieren", type="primary"):
+                if st.button("🚀 Alle Artikel aus CSV importieren", type="primary"):
                     erfolgreich = 0
                     for _, row in df_import.iterrows():
                         payload = {
@@ -233,7 +213,7 @@ def render_lager_verwaltung(supabase):
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
-    # --- TAB 6: ARTIKEL ANLEGEN (HÄNDISCH) ---
+    # --- TAB 6: ARTIKEL ANLEGEN ---
     with tabs[5]:
         st.subheader("➕ Neuen Artikel händisch anlegen")
         if not darf_bearbeiten:
@@ -243,7 +223,7 @@ def render_lager_verwaltung(supabase):
                 col_a1, col_a2 = st.columns(2)
                 with col_a1:
                     n_bezeichnung = st.text_input("Artikelbezeichnung *", placeholder="z.B. NYM-J 3x1.5")
-                    n_artnr = st.text_input("Artikelnummer / Barcode", placeholder="z.B. EAN oder Barcode-Nummer")
+                    n_artnr = st.text_input("Artikelnummer / Barcode", placeholder="z.B. EAN-Code")
                     n_kategorie = st.selectbox("Kategorie", ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug"])
                 with col_a2:
                     n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])

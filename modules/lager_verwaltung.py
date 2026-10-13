@@ -1,6 +1,18 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from PIL import Image
+from io import BytesIO
+import barcode
+from barcode.writer import ImageWriter
+import tempfile
+import os
+
+try:
+    from pyzbar.pyzbar import decode
+    PYZBAR_AVAILABLE = True
+except ImportError:
+    PYZBAR_AVAILABLE = False
 
 def hat_recht(modul_id, aktion="sehen"):
     user = st.session_state.get("user_data", {})
@@ -11,7 +23,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("Multifunktionales Lager: Barcode-Scanner, Kamera-Erfassung, CSV-Massenimport & manuelle Verwaltung.")
+    st.caption("Multifunktionales Lager: Barcode-Scanner, Foto-Erkennung, Etikettendruck, CSV-Massenimport & manuelle Verwaltung.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -19,6 +31,7 @@ def render_lager_verwaltung(supabase):
 
     darf_bearbeiten = hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
 
+    # Daten aus Supabase laden
     try:
         m_res = supabase.table("lager_material").select("*").order("bezeichnung").execute()
         material_liste = m_res.data or []
@@ -28,7 +41,8 @@ def render_lager_verwaltung(supabase):
     tabs = st.tabs([
         "📊 Bestandsübersicht", 
         "⚡ Schnell-Buchung & Barcode", 
-        "📷 Kamera & Foto-Erfassung", 
+        "📷 Kamera & Barcode-Erkennung", 
+        "🖨️ Barcode-Drucker & Etiketten",
         "📥 CSV-Massenimport", 
         "📋 Inventur", 
         "➕ Artikel anlegen"
@@ -134,18 +148,75 @@ def render_lager_verwaltung(supabase):
                         except Exception as e:
                             st.error(f"Fehler: {e}")
 
-    # --- TAB 3: KAMERA & FOTO-ERFASSUNG ---
+    # --- TAB 3: KAMERA & BARCODE-ERKENNUNG ---
     with tabs[2]:
-        st.subheader("📷 Mobile Kamera & Foto-Referenz")
-        st.caption("Machen Sie ein Foto vom Artikel oder Karton, um es als optische Vorlage beim Eintragen zu nutzen.")
+        st.subheader("📷 Mobile Kamera & Automatischer Barcode-Scan")
+        st.caption("Machen Sie ein Foto vom Barcode auf der Verpackung. Das System liest die Nummer automatisch aus!")
 
-        foto = st.camera_input("Foto aufnehmen")
+        if not PYZBAR_AVAILABLE:
+            st.warning("ℹ️ Hinweis: Die automatische Barcode-Erkennung benötigt das Paket `pyzbar`. Alternativ können Sie Barcodes über einen Handscanner in Tab 2 oder Tab 6 nutzen.")
+
+        foto = st.camera_input("Barcode-Foto aufnehmen")
         if foto:
-            st.image(foto, caption="Aufgenommenes Materialfoto", width=350)
-            st.info("💡 **Nächster Schritt:** Nutzen Sie die Details auf diesem Foto, um direkt in den Reiter **'➕ Artikel anlegen'** zu wechseln und den Artikel einzutragen.")
+            image = Image.open(foto)
+            st.image(image, caption="Aufgenommenes Foto", width=300)
 
-    # --- TAB 4: CSV-MASSENIMPORT ---
+            if PYZBAR_AVAILABLE:
+                try:
+                    decoded_objects = decode(image)
+                    if decoded_objects:
+                        for obj in decoded_objects:
+                            barcode_data = obj.data.decode('utf-8')
+                            st.success(f"🎯 **Erfolgreich ausgelesener Barcode:** `{barcode_data}`")
+                            
+                            # Im Session State speichern, damit Tab 6 darauf zugreifen kann
+                            st.session_state["gescannter_barcode"] = barcode_data
+                            st.info("💡 Die Nummer wurde im Zwischenspeicher hinterlegt. Wechseln Sie jetzt in den Reiter **'➕ Artikel anlegen'**, dort wird die Artikelnummer automatisch eingetragen!")
+                    else:
+                        st.warning("⚠️ Kein Barcode auf dem Foto erkannt. Versuchen Sie es mit etwas mehr Licht oder näher am Strichcode.")
+                except Exception as e:
+                    st.error(f"Fehler beim Auslesen des Barcodes: {e}")
+
+    # --- TAB 4: BARCODE-DRUCKER & ETIKETTEN ---
     with tabs[3]:
+        st.subheader("🖨️ Barcode-Etiketten generieren & ausdrucken")
+        st.caption("Erstellen Sie professionelle Barcode-Etiketten für Ihre Regale, Kisten und Materialien.")
+
+        if not material_liste:
+            st.warning("Keine Artikel vorhanden, für die Etiketten gedruckt werden könnten.")
+        else:
+            eticket_optionen = {f"{m['bezeichnung']} (Code: {m.get('artikelnummer', 'Keiner')})": m for m in material_liste if m.get('artikelnummer')}
+            
+            if not eticket_optionen:
+                st.info("💡 Bislang haben Artikel keine Artikelnummer/Barcode hinterlegt. Vergeben Sie beim Anlegen oder Bearbeiten von Artikeln eine Artikelnummer, um hier Etiketten zu drucken.")
+            else:
+                ausgewaehlte_labels = st.multiselect("Artikel für Etikettendruck wählen", options=list(eticket_optionen.keys()))
+
+                if ausgewaehlte_labels and st.button("🖨️ Barcodes als Etiketten generieren", type="primary"):
+                    st.markdown("### Vorschau der generierten Barcodes:")
+                    for label in ausgewaehlte_labels:
+                        mat = eticket_optionen[label]
+                        code_val = str(mat.get('artikelnummer'))
+                        
+                        col_e1, col_e2 = st.columns([1, 2])
+                        with col_e1:
+                            try:
+                                # Barcode mit Code128 erzeugen
+                                EAN = barcode.get_class('code128')
+                                rv = BytesIO()
+                                ean = EAN(code_val, writer=ImageWriter())
+                                ean.write(rv)
+                                st.image(rv.getvalue(), width=200)
+                            except Exception as e:
+                                st.error(f"Fehler beim Generieren des Barcodes für {code_val}: {e}")
+                        with col_e2:
+                            st.write(f"**Bezeichnung:** {mat.get('bezeichnung')}")
+                            st.write(f"**Lagerort:** {mat.get('lagerort', 'Hauptlager')}")
+                            st.write(f"**Artikelnummer / Barcode:** `{code_val}`")
+                        st.divider()
+
+    # --- TAB 5: CSV-MASSENIMPORT ---
+    with tabs[4]:
         st.subheader("📥 Massen-Import (CSV)")
         st.caption("Laden Sie eine CSV-Liste hoch, um hunderte Artikel auf einmal in das Lager einzupflegen.")
 
@@ -181,8 +252,8 @@ def render_lager_verwaltung(supabase):
             except Exception as e:
                 st.error(f"Fehler beim Verarbeiten der CSV-Datei: {e}")
 
-    # --- TAB 5: INVENTUR ---
-    with tabs[4]:
+    # --- TAB 6: INVENTUR ---
+    with tabs[5]:
         st.subheader("📋 Systematische Inventur")
         if not material_liste:
             st.warning("Keine Artikel vorhanden.")
@@ -211,17 +282,20 @@ def render_lager_verwaltung(supabase):
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
-    # --- TAB 6: ARTIKEL ANLEGEN ---
-    with tabs[5]:
-        st.subheader("➕ Neuen Artikel händisch anlegen")
+    # --- TAB 7: ARTIKEL ANLEGEN ---
+    with tabs[6]:
+        st.subheader("➕ Neuen Artikel anlegen")
         if not darf_bearbeiten:
             st.error("⛔ Keine Berechtigung.")
         else:
+            # Automatisch ausgelesenen Barcode abgreifen, falls vorhanden
+            vorgeschlagener_code = st.session_state.pop("gescannter_barcode", "")
+
             with st.form("neuer_artikel_form"):
                 col_a1, col_a2 = st.columns(2)
                 with col_a1:
                     n_bezeichnung = st.text_input("Artikelbezeichnung *", placeholder="z.B. NYM-J 3x1.5")
-                    n_artnr = st.text_input("Artikelnummer / Barcode", placeholder="z.B. EAN-Code")
+                    n_artnr = st.text_input("Artikelnummer / Barcode", value=vorgeschlagener_code, placeholder="z.B. per Kamera gescannt oder EAN")
                     n_kategorie = st.selectbox("Kategorie", ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug"])
                 with col_a2:
                     n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])

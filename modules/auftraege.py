@@ -385,10 +385,10 @@ def render_auftraege_verwaltung(supabase):
                                     sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
                                     
                                     supabase.table("auftraege").update({"kunde_unterschrift": sig_base64}).eq("id", a["id"]).execute()
-                                    st.success("Kundenunterschrift erfolgreich gespeichert!")
+                                    st.success("✅ Kundenunterschrift erfolgreich gespeichert!")
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"Fehler beim Speichern: {e}")
+                                    st.error(f"❌ Fehler beim Speichern: {e}")
                             else:
                                 st.warning("⚠️ Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
 
@@ -416,10 +416,10 @@ def render_auftraege_verwaltung(supabase):
                                     sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
                                     
                                     supabase.table("auftraege").update({"mitarbeiter_unterschrift": sig_base64}).eq("id", a["id"]).execute()
-                                    st.success("Monteurunterschrift erfolgreich gespeichert!")
+                                    st.success("✅ Monteurunterschrift erfolgreich gespeichert!")
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"Fehler beim Speichern: {e}")
+                                    st.error(f"❌ Fehler beim Speichern: {e}")
                             else:
                                 st.warning("⚠️ Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
 

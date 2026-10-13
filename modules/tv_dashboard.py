@@ -36,7 +36,6 @@ def render_tv_dashboard(supabase):
     st.markdown("---")
 
     try:
-        # Lade alle Aufträge, die im Status "Offener Auftrag" oder "In Bearbeitung" sind
         res = supabase.table("auftraege").select("*, kunden(*), gebaeude(*), fahrzeuge(*)").in_("status", ["Offener Auftrag", "In Bearbeitung"]).order("termin_um").execute()
         auftraege = res.data or []
     except Exception as e:
@@ -47,13 +46,11 @@ def render_tv_dashboard(supabase):
         st.markdown("<h2 style='text-align: center; color: #808080; margin-top: 50px;'>🎉 Aktuell sind keine offenen Einsätze im System.</h2>", unsafe_allow_html=True)
         return
 
-    # Aufteilung in ein modernes 2-Spalten-Layout für große Bildschirme
     col1, col2 = st.columns(2)
 
     for idx, a in enumerate(auftraege):
         target_col = col1 if idx % 2 == 0 else col2
         
-        # Teammitglieder für diesen Auftrag ermitteln
         try:
             team_res = supabase.table("auftrag_mitarbeiter").select("mitarbeiter(vorname, nachname)").eq("auftrag_id", a["id"]).execute()
             team_names = ", ".join([f"{t['mitarbeiter']['vorname']} {t['mitarbeiter']['nachname']}" for t in team_res.data if t.get("mitarbeiter")])

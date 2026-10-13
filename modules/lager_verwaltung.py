@@ -14,14 +14,12 @@ def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
     st.caption("Verwalten Sie Artikel, Soll- und Ist-Bestände, buchen Sie Material ein/aus und führen Sie strukturierte Inventuren durch.")
 
-    # Hinweis: Da wir Modul-IDs fortlaufend vergeben, nutzen wir hier ID "5" (kann in app.py angepasst werden)
-    if not hat_recht("5", "sehen"):
+    if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
         return
 
-    darf_bearbeiten = hat_recht("5", "bearbeiten") or hat_recht("5", "erstellen")
+    darf_bearbeiten = hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
 
-    # Daten aus Supabase laden
     try:
         m_res = supabase.table("lager_material").select("*").order("bezeichnung").execute()
         material_liste = m_res.data or []
@@ -37,7 +35,6 @@ def render_lager_verwaltung(supabase):
         if not material_liste:
             st.info("Noch keine Artikel im Lager vorhanden. Legen Sie im Reiter 'Neuen Artikel anlegen' den ersten Artikel an.")
         else:
-            # Suchfilter
             suchbegriff = st.text_input("🔍 Artikel suchen (Bezeichnung, Artikelnummer oder Kategorie)", "")
 
             gefilterte_liste = []
@@ -46,13 +43,11 @@ def render_lager_verwaltung(supabase):
                 if suchbegriff.lower() in text_kombi:
                     gefilterte_liste.append(mat)
 
-            # Tabelle aufbereiten
             anzeige_daten = []
             for m in gefilterte_liste:
                 soll = m.get('soll_bestand', 0)
                 ist = m.get('ist_bestand', 0)
                 
-                # Ampel-Logik
                 if ist <= 0:
                     status = "🔴 Leer / Kritisch"
                 elif ist < soll:
@@ -93,7 +88,6 @@ def render_lager_verwaltung(supabase):
                 selected_label = st.selectbox("Artikel auswählen *", options=list(artikel_optionen.keys()))
                 selected_id = artikel_optionen[selected_label]
 
-                // Aktuellen Artikel ermitteln
                 aktiver_artikel = next((m for m in material_liste if m['id'] == selected_id), None)
 
                 buchungs_art = st.radio("Buchungsart *", ["📥 Einbuchung (Zugang / Lieferung)", "📤 Ausbuchung (Entnahme / Verbrauch)"], horizontal=True)
@@ -106,13 +100,11 @@ def render_lager_verwaltung(supabase):
                         if "Einbuchung" in buchungs_art:
                             neuer_bestand = alter_bestand + menge
                         else:
-                            neuer_bestand = max(0, alter_bestand - menge) # Verhindert Minusbestände
+                            neuer_bestand = max(0, alter_bestand - menge)
 
                         try:
-                            # Bestand in lager_material updaten
                             supabase.table("lager_material").update({"ist_bestand": neuer_bestand}).eq("id", selected_id).execute()
                             
-                            # Optional: In Bewegungshistorie protokollieren (falls Tabelle existiert)
                             try:
                                 supabase.table("lager_bewegungen").insert({
                                     "material_id": selected_id,
@@ -121,7 +113,7 @@ def render_lager_verwaltung(supabase):
                                     "kommentar": kommentar or "Schnellbuchung"
                                 }).execute()
                             except Exception:
-                                pass # Falls die Historientabelle noch nicht angelegt wurde
+                                pass
 
                             st.toast(f"✅ Buchung erfolgreich! Neuer Bestand: {neuer_bestand}", icon="🎉")
                             st.rerun()
@@ -142,15 +134,14 @@ def render_lager_verwaltung(supabase):
 
             with st.form("inventur_form"):
                 inventur_daten = {}
-                for idx, m in enumerate(material_liste):
+                for m in material_liste:
                     col1, col2, col3 = st.columns([3, 2, 2])
                     with col1:
                         st.write(f"**{m.get('bezeichnung')}** `({m.get('artikelnummer', 'Keine Art-Nr')})`")
                         st.caption(f"Lagerort: {m.get('lagerort', 'Standard')} | Einheit: {m.get('einheit', 'Stk.')}")
                     with col2:
-                        st.write(System-Soll: **{m.get('ist_bestand', 0)}**)
+                        st.write(f"Soll: **{m.get('ist_bestand', 0)}**")
                     with col3:
-                        # Eingabefeld für den gezählten Ist-Bestand
                         gezahlt = st.number_input(
                             "Gezählter Bestand", 
                             min_value=0, 
@@ -172,12 +163,12 @@ def render_lager_verwaltung(supabase):
                                     "material_id": mat_id,
                                     "art": "Inventurkorrektur",
                                     "menge": neuer_ist,
-                                    "kommentar": "Jahres- / Perioden-Inventur"
+                                    "kommentar": "Perioden-Inventur"
                                 }).execute()
                             except Exception:
                                 pass
 
-                        st.toast("Inventur erfolgreich abgeschlossen und Bestände aktualisiert!", icon="🎯")
+                        st.toast("Inventur erfolgreich abgeschlossen!", icon="🎯")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Fehler bei der Inventur-Speicherung: {e}")
@@ -197,7 +188,7 @@ def render_lager_verwaltung(supabase):
                     n_kategorie = st.selectbox("Kategorie", ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler & Sicherungen", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Sonstiges"])
                 with col_a2:
                     n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])
-                    n_lagerort = st.text_input("Lagerort / Regal", placeholder="z.B. Regal A1, Fach 3 oder Sprinter 1")
+                    n_lagerort = st.text_input("Lagerort / Regal", placeholder="z.B. Regal A1, Fach 3")
                     
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:

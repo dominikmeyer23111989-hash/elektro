@@ -374,8 +374,8 @@ def render_auftraege_verwaltung(supabase):
                             key=f"canvas_kunde_{a['id']}"
                         )
                         if st.button("💾 Kunde Unterschrift speichern", key=f"btn_save_kunde_{a['id']}"):
-                            try:
-                                if canvas_kunde.image_data is not None:
+                            if canvas_kunde.json_data is not None and len(canvas_kunde.json_data.get("objects", [])) > 0:
+                                try:
                                     img = Image.fromarray(canvas_kunde.image_data.astype('uint8'), 'RGBA')
                                     rgb_img = Image.new("RGB", img.size, (255, 255, 255))
                                     rgb_img.paste(img, mask=img.split()[3])
@@ -386,10 +386,10 @@ def render_auftraege_verwaltung(supabase):
                                     supabase.table("auftraege").update({"kunde_unterschrift": sig_base64}).eq("id", a["id"]).execute()
                                     st.success("Kundenunterschrift erfolgreich gespeichert!")
                                     st.rerun()
-                            except RuntimeError:
-                                st.warning("Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
-                            except Exception as e:
-                                st.error(f"Fehler: {e}")
+                                except Exception as e:
+                                    st.error(f"Fehler beim Speichern: {e}")
+                            else:
+                                st.warning("⚠️ Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
 
                     with col_sig2:
                         st.markdown("Unterschrift Monteur / Team")
@@ -404,8 +404,8 @@ def render_auftraege_verwaltung(supabase):
                             key=f"canvas_ma_{a['id']}"
                         )
                         if st.button("💾 Monteur Unterschrift speichern", key=f"btn_save_ma_{a['id']}"):
-                            try:
-                                if canvas_ma.image_data is not None:
+                            if canvas_ma.json_data is not None and len(canvas_ma.json_data.get("objects", [])) > 0:
+                                try:
                                     img = Image.fromarray(canvas_ma.image_data.astype('uint8'), 'RGBA')
                                     rgb_img = Image.new("RGB", img.size, (255, 255, 255))
                                     rgb_img.paste(img, mask=img.split()[3])
@@ -416,10 +416,10 @@ def render_auftraege_verwaltung(supabase):
                                     supabase.table("auftraege").update({"mitarbeiter_unterschrift": sig_base64}).eq("id", a["id"]).execute()
                                     st.success("Monteurunterschrift erfolgreich gespeichert!")
                                     st.rerun()
-                            except RuntimeError:
-                                st.warning("Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
-                            except Exception as e:
-                                st.error(f"Fehler: {e}")
+                                except Exception as e:
+                                    st.error(f"Fehler beim Speichern: {e}")
+                            else:
+                                st.warning("⚠️ Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
 
                     st.markdown("---")
                     # Frische Daten für das PDF abrufen (inkl. gespeicherter Signaturen)

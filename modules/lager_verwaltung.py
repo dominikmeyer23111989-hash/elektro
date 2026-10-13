@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import io
-from streamlit_zxing import st_zxing  # Für Live-Barcode/QR-Scans per Handykamera
+
 
 def hat_recht(modul_id, aktion="sehen"):
     """Prüft über die app.py-Logik, ob das Recht vorliegt."""

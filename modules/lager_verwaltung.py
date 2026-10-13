@@ -148,37 +148,26 @@ def render_lager_verwaltung(supabase):
                         except Exception as e:
                             st.error(f"Fehler: {e}")
 
-    # --- TAB 3: KAMERA & BARCODE-ERKENNUNG ---
+    # --- TAB 3: KAMERA & BARCODE-ERFASSUNG ---
     with tabs[2]:
-        st.subheader("📷 Mobile Kamera & Automatischer Barcode-Scan")
-        st.caption("Machen Sie ein Foto vom Barcode auf der Verpackung. Das System liest die Nummer automatisch aus!")
+        st.subheader("📷 Mobile Kamera & Barcode-Erfassung")
+        st.caption("Machen Sie ein Foto vom Artikel als optische Referenz. Tragen Sie die Barcode-Nummer darunter ein, um sie direkt in das System zu übernehmen.")
 
-        if not PYZBAR_AVAILABLE:
-            st.warning("ℹ️ Hinweis: Die automatische Barcode-Erkennung benötigt das Paket `pyzbar`.")
-
-        foto = st.camera_input("Barcode-Foto aufnehmen")
+        foto = st.camera_input("Foto aufnehmen")
         if foto:
             image = Image.open(foto)
-            st.image(image, caption="Aufgenommenes Foto", width=300)
+            st.image(image, caption="Aufgenommenes Materialfoto", width=300)
 
-            erfasster_code = ""
-            if PYZBAR_AVAILABLE:
-                try:
-                    decoded_objects = decode(image)
-                    if decoded_objects:
-                        erfasster_code = decoded_objects[0].data.decode('utf-8')
-                        st.success(f"🎯 **Erfolgreich ausgelesener Barcode:** `{erfasster_code}`")
-                except Exception as e:
-                    st.error(f"Fehler beim Auslesen: {e}")
-
-            # Zusätzliches manuelles Textfeld, falls die Bilderkennung den Code nicht fehlerfrei trifft
             st.markdown("---")
-            manueller_code = st.text_input("Gelesenen Barcode bestätigen / korrigieren", value=erfasster_code)
+            st.write("✏️ **Barcode-Nummer eintragen:**")
+            
+            # Ein stabiles Eingabefeld ohne fehleranfällige Server-Bilderkennung
+            manueller_code = st.text_input("Artikelnummer / Barcode vom Etikett", placeholder="z.B. 4006381333331", key="input_barcode_erfassung")
 
             if st.button("🚀 Code für 'Artikel anlegen' übernehmen", type="primary"):
                 if manueller_code:
                     st.session_state["aktiver_barcode"] = manueller_code
-                    st.toast(f"✅ Code '{manueller_code}' übernommen! Wechseln Sie nun zu 'Artikel anlegen'.", icon="🎉")
+                    st.toast(f"✅ Code '{manueller_code}' erfolgreich übernommen! Wechseln Sie jetzt zum Tab 'Artikel anlegen'.", icon="🎉")
                 else:
                     st.warning("Bitte geben Sie eine Nummer ein.")
 

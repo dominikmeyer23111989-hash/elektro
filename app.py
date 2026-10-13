@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 1. Supabase Initialisierung
+# 1. Supabase Initialisierung & Zentrale Rechte-Hilfsfunktion
 # -----------------------------------------------------------------------------
 @st.cache_resource
 def get_supabase() -> Client:
@@ -34,6 +34,16 @@ try:
     supabase = get_supabase()
 except Exception as e:
     st.error(f"Fehler bei der Verbindung zu Supabase: {e}")
+
+def hat_recht(modul_id, aktion="sehen"):
+    """Zentrale Prüfung für feingranulare CRUD-Rechte (Sehen, Erstellen, Bearbeiten, Löschen)."""
+    user = st.session_state.get("user_data", {})
+    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+        return True
+    
+    rechte = user.get("rechte", [])
+    recht_key = f"{modul_id}_{aktion}"
+    return recht_key in rechte
 
 # -----------------------------------------------------------------------------
 # Direkter TV-Dashboard Check (?view=tv) - Vor dem Login-Check!
@@ -88,7 +98,19 @@ def render_login():
                                 rolle_info = user_rec.get("rollen") or {}
                                 f_rolle = rolle_info.get("bezeichnung", "Admin")
                                 f_ebene = rolle_info.get("ebene", "buero")
-                                f_rechte = rolle_info.get("erlaubte_menues") or ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+                                # Fallback auf alle Rechte, falls noch keine feinen Rechte hinterlegt sind
+                                f_rechte = rolle_info.get("erlaubte_menues") or [
+                                    "1_sehen", "1_erstellen", "1_bearbeiten", "1_loeschen",
+                                    "2_sehen", "2_erstellen", "2_bearbeiten", "2_loeschen",
+                                    "3_sehen", "3_erstellen", "3_bearbeiten", "3_loeschen",
+                                    "4_sehen", "4_erstellen", "4_bearbeiten", "4_loeschen",
+                                    "5_sehen", "5_erstellen", "5_bearbeiten", "5_loeschen",
+                                    "6_sehen", "6_erstellen", "6_bearbeiten", "6_loeschen",
+                                    "7_sehen", "7_erstellen", "7_bearbeiten", "7_loeschen",
+                                    "8_sehen", "8_erstellen", "8_loeschen",
+                                    "9_sehen", "9_bearbeiten",
+                                    "10_sehen", "10_exportieren"
+                                ]
 
                                 st.session_state["authenticated"] = True
                                 st.session_state["user_data"] = {
@@ -260,7 +282,7 @@ def render_mein_profil(supabase):
                         st.error("Das eingegebene aktuelle Passwort ist falsch.")
 
 # -----------------------------------------------------------------------------
-# 4. Hauptanwendung & Routing (Optimierte Sidebar-Anordnung)
+# 4. Hauptanwendung & Routing (Optimierte Sidebar-Anordnung mit Rechte-Check)
 # -----------------------------------------------------------------------------
 def render_app():
     user = st.session_state.get("user_data")
@@ -328,23 +350,28 @@ def render_app():
                 except Exception as e:
                     st.error(f"Fehler: {e}")
 
-    # --- 2. Hauptmenü / Modulauswahl ---
+    # --- 2. Hauptmenü / Modulauswahl mit feiner Rechteprüfung ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### 📂 Hauptmenü")
 
     extended_modules = {
-        **ALL_MODULES, 
+        "1": "1. Mitarbeiterverwaltung",
+        "2": "2. Lagerverwaltung",
+        "3": "3. Zeiterfassung",
         "4": "4. Aufträge & Einsätze",
-        "6": "6. Fahrzeugflotte & Mängel", 
-        "7": "7. Gebäude & Liegenschaften", 
-        "8": "8. TV-Live-Leitsystem",
+        "5": "5. Kundenverwaltung",
+        "6": "6. Fahrzeugflotte",
+        "7": "7. Gebäude",
+        "8": "8. Dokumente",
+        "9": "9. TV-Leitsystem",
         "10": "10. Steuerberater-Export"
     }
-    allowed_menu_keys = user.get("rechte", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
-    available_menus = {k: v for k, v in extended_modules.items() if k in allowed_menu_keys}
+
+    # Nur Module anzeigen, für die der User das Recht "sehen" besitzt
+    available_menus = {k: v for k, v in extended_modules.items() if hat_recht(k, "sehen")}
 
     if not available_menus:
-        st.sidebar.warning("Noch keine zugewiesenen Menürechte gefunden.")
+        st.sidebar.warning("⚠️ Keine Menürechte zugewiesen.")
         selected_main = None
     else:
         selected_main = st.sidebar.selectbox(
@@ -378,6 +405,11 @@ def render_app():
         render_mein_profil(supabase)
     else:
         if selected_main:
+            # Schutz vor Direktzugriff, falls Modul nicht gesehen werden darf
+            if not hat_recht(selected_main, "sehen"):
+                st.error("⛔ Sie haben keine Berechtigung, dieses Modul aufzurufen.")
+                return
+
             if selected_main == "1":
                 render_mitarbeiter_verwaltung(supabase)
             elif selected_main == "3":
@@ -390,7 +422,7 @@ def render_app():
                 render_fahrzeug_verwaltung(supabase)
             elif selected_main == "7":
                 render_gebaeude_verwaltung(supabase)
-            elif selected_main == "8":
+            elif selected_main == "9":
                 render_tv_dashboard(supabase)
             elif selected_main == "10":
                 render_steuerberater_export(supabase)

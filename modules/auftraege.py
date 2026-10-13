@@ -43,9 +43,12 @@ def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
     pdf.cell(0, 6, "Auftraggeber & Objektanschrift:", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
     
-    k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}" if kunde else "Kein Kunde zugeordnet"
-    k_tel = kunde.get('telefon', '-') if kunde else '-'
-    pdf.cell(0, 6, clean_text(f"Kunde: {k_name} (Tel: {k_tel})"), new_x="LMARGIN", new_y="NEXT")
+    if kunde:
+        k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}"
+        k_tel = kunde.get('telefon', '-')
+        pdf.cell(0, 6, clean_text(f"Kunde: {k_name} (Tel: {k_tel})"), new_x="LMARGIN", new_y="NEXT")
+    else:
+        pdf.cell(0, 6, clean_text("Kunde: Spontanauftrag / Ohne Kundenzuordnung"), new_x="LMARGIN", new_y="NEXT")
     
     if gebaeude:
         g_adr = f"{gebaeude.get('strasse')} {gebaeude.get('hausnummer')}, {gebaeude.get('ort')}"
@@ -54,7 +57,7 @@ def generate_auftrag_pdf(a, kunde, gebaeude, monteur):
         if a.get('mieter_we'):
             pdf.cell(0, 6, clean_text(f"Betroffene WE / Mieter: {a.get('mieter_we')}"), new_x="LMARGIN", new_y="NEXT")
     else:
-        pdf.cell(0, 6, clean_text("Objektadresse: -"), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, clean_text("Objektadresse: Direkt im Auftrag angegeben / Ohne Objekt-Verknüpfung"), new_x="LMARGIN", new_y="NEXT")
     
     m_name = f"{monteur.get('vorname', '')} {monteur.get('nachname', '')}" if monteur else "Nicht zugewiesen"
     pdf.cell(0, 6, clean_text(f"Zuständiger Monteur: {m_name}"), new_x="LMARGIN", new_y="NEXT")
@@ -140,8 +143,8 @@ def render_auftraege_verwaltung(supabase):
                 monteur = a.get("mitarbeiter") or {}
 
                 status_icon = "🟢" if a.get("status") == "Abgeschlossen" else ("🟡" if a.get("status") == "In Bearbeitung" else "🔴")
-                k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}".strip() or "Kein Kunde"
-                g_adr = f"{gebaeude.get('strasse', '')} {gebaeude.get('hausnummer', '')}, {gebaeude.get('ort', '')}" if gebaeude else "Kein Objekt"
+                k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}".strip() or "Spontanauftrag / Kein Kunde"
+                g_adr = f"{gebaeude.get('strasse', '')} {gebaeude.get('hausnummer', '')}, {gebaeude.get('ort', '')}" if gebaeude else "Kein Objekt zugeordnet"
                 m_name = f"{monteur.get('vorname', '')} {monteur.get('nachname', '')}".strip() or "Unzugewiesen"
 
                 with st.expander(f"{status_icon} [{a.get('auftragsnummer')}] {k_name} | Objekt: {g_adr} (Monteur: {m_name})"):
@@ -163,7 +166,7 @@ def render_auftraege_verwaltung(supabase):
                         verbrauchtes_material = st.text_area("Benötigtes / Verbrautes Material eintragen", value=a.get("benoetigtes_material") or "")
                         
                         neuer_monteur = None
-                        if is_admin:
+                        if is_admin and verfuegbare_mitarbeiter:
                             neuer_monteur = st.selectbox(
                                 "Monteur zuweisen",
                                 options=[m["id"] for m in verfuegbare_mitarbeiter],
@@ -201,67 +204,73 @@ def render_auftraege_verwaltung(supabase):
         with tabs[1]:
             st.subheader("Neuen Auftrag erstellen")
 
-            if not kunden_liste:
-                st.warning("Bitte legen Sie zuerst mindestens einen Kunden an.")
-            elif not gebaeude_liste:
-                st.warning("Bitte legen Sie zuerst mindestens ein Gebäude an.")
-            else:
-                with st.form("neuer_auftrag_form"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        n_auftragsnummer = st.text_input("Auftragsnummer *", value=f"A-{datetime.now().strftime('%Y%m%d')}-01")
-                        n_kunde = st.selectbox(
-                            "Auftraggeber (Kunde) *",
-                            options=[k["id"] for k in kunden_liste],
-                            format_func=lambda x: next(f"{k['nachname']}, {k['vorname']} ({k.get('firma', 'Privat')})" for k in kunden_liste if k["id"] == x)
-                        )
-                        n_gebaeude = st.selectbox(
-                            "Auftragsort (Gebäude / Objekt) *",
-                            options=[g["id"] for g in gebaeude_liste],
-                            format_func=lambda x: next(f"[{g.get('gebaeude_code', 'Kein Code')}] {g['strasse']} {g['hausnummer']}, {g['ort']}" for g in gebaeude_liste if g["id"] == x)
-                        )
-                        n_mieter_we = st.text_input("Mieter / WE / Etage (optional)", placeholder="z.B. WE 4, 2. Obergeschoss links")
+            with st.form("neuer_auftrag_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    n_auftragsnummer = st.text_input("Auftragsnummer *", value=f"A-{datetime.now().strftime('%Y%m%d')}-01")
+                    
+                    # Optionaler Kunde
+                    kunden_optionen = [None] + [k["id"] for k in kunden_liste]
+                    n_kunde = st.selectbox(
+                        "Auftraggeber (Kunde) – Optional",
+                        options=kunden_optionen,
+                        format_func=lambda x: "--- Kein Kunde / Spontanauftrag ---" if x is None else next((f"{k['nachname']}, {k['vorname']} ({k.get('firma', 'Privat')})" for k in kunden_liste if k["id"] == x), "")
+                    )
 
-                    with col2:
+                    # Optionales Gebäude
+                    gebaeude_optionen = [None] + [g["id"] for g in gebaeude_liste]
+                    n_gebaeude = st.selectbox(
+                        "Auftragsort (Gebäude / Objekt) – Optional",
+                        options=gebaeude_optionen,
+                        format_func=lambda x: "--- Kein Objekt ---" if x is None else next((f"[{g.get('gebaeude_code', 'Kein Code')}] {g['strasse']} {g['hausnummer']}, {g['ort']}" for g in gebaeude_liste if g["id"] == x), "")
+                    )
+
+                    n_mieter_we = st.text_input("Mieter / WE / Etage (optional)", placeholder="z.B. WE 4, 2. Obergeschoss links")
+
+                with col2:
+                    if verfuegbare_mitarbeiter:
                         n_monteur = st.selectbox(
                             "Zuständiger Mitarbeiter (Monteur) *",
                             options=[m["id"] for m in verfuegbare_mitarbeiter],
                             format_func=lambda x: next(f"{m['vorname']} {m['nachname']}" for m in verfuegbare_mitarbeiter if m["id"] == x)
                         )
-                        
-                        st.write("Einsatztermin (Datum & Uhrzeit)")
-                        col_d1, col_d2 = st.columns(2)
-                        with col_d1:
-                            n_datum = st.date_input("Einsatzdatum", value=datetime.today())
-                        with col_d2:
-                            n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.strptime("08:00", "%H:%M").time())
-                            n_uhr_bis = st.time_input("Uhrzeit Bis", value=datetime.strptime("16:00", "%H:%M").time())
+                    else:
+                        n_monteur = None
+                        st.warning("Keine verfügbaren Mitarbeiter gefunden.")
+                    
+                    st.write("Einsatztermin (Datum & Uhrzeit)")
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        n_datum = st.date_input("Einsatzdatum", value=datetime.today())
+                    with col_d2:
+                        n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.strptime("08:00", "%H:%M").time())
+                        n_uhr_bis = st.time_input("Uhrzeit Bis", value=datetime.strptime("16:00", "%H:%M").time())
 
-                    n_arbeiten = st.text_area("Auszuführende Arbeiten *", placeholder="z.B. Zählerschrank umbauen, Wallbox anschließen...")
-                    n_material = st.text_area("Benötigtes Material (Vorbereitung)", placeholder="z.B. 1x FI-Schalter, 15m NYM-J 3x1.5...")
+                n_arbeiten = st.text_area("Auszuführende Arbeiten *", placeholder="z.B. Zählerschrank umbauen, Notdienst Störung Beseitigung...")
+                n_material = st.text_area("Benötigtes Material (Vorbereitung)", placeholder="z.B. 1x FI-Schalter, 15m NYM-J 3x1.5...")
 
-                    if st.form_submit_button("Auftrag anlegen & zuweisen", type="primary", use_container_width=True):
-                        if not n_auftragsnummer or not n_arbeiten:
-                            st.warning("Bitte Auftragsnummer und auszuführende Arbeiten angeben.")
-                        else:
-                            try:
-                                dt_von = datetime.combine(n_datum, n_uhr_von).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
-                                dt_bis = datetime.combine(n_datum, n_uhr_bis).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
+                if st.form_submit_button("Auftrag anlegen & zuweisen", type="primary", use_container_width=True):
+                    if not n_auftragsnummer or not n_arbeiten:
+                        st.warning("Bitte Auftragsnummer und auszuführende Arbeiten angeben.")
+                    else:
+                        try:
+                            dt_von = datetime.combine(n_datum, n_uhr_von).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
+                            dt_bis = datetime.combine(n_datum, n_uhr_bis).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
 
-                                auftrag_payload = {
-                                    "auftragsnummer": n_auftragsnummer,
-                                    "kunde_id": n_kunde,
-                                    "gebaeude_id": n_gebaeude,
-                                    "mitarbeiter_id": n_monteur,
-                                    "arbeiten": n_arbeiten,
-                                    "mieter_we": n_mieter_we,
-                                    "termin_um": dt_von,
-                                    "termin_bis": dt_bis,
-                                    "benoetigtes_material": n_material,
-                                    "status": "Offen"
-                                }
-                                supabase.table("auftraege").insert(auftrag_payload).execute()
-                                st.success(f"Auftrag {n_auftragsnummer} erfolgreich angelegt und zugewiesen!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Fehler beim Anlegen: {e}")
+                            auftrag_payload = {
+                                "auftragsnummer": n_auftragsnummer,
+                                "kunde_id": n_kunde,
+                                "gebaeude_id": n_gebaeude,
+                                "mitarbeiter_id": n_monteur,
+                                "arbeiten": n_arbeiten,
+                                "mieter_we": n_mieter_we,
+                                "termin_um": dt_von,
+                                "termin_bis": dt_bis,
+                                "benoetigtes_material": n_material,
+                                "status": "Offen"
+                            }
+                            supabase.table("auftraege").insert(auftrag_payload).execute()
+                            st.success(f"Auftrag {n_auftragsnummer} erfolgreich angelegt!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler beim Anlegen: {e}")

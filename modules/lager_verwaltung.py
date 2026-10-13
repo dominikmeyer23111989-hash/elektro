@@ -154,28 +154,33 @@ def render_lager_verwaltung(supabase):
         st.caption("Machen Sie ein Foto vom Barcode auf der Verpackung. Das System liest die Nummer automatisch aus!")
 
         if not PYZBAR_AVAILABLE:
-            st.warning("ℹ️ Hinweis: Die automatische Barcode-Erkennung benötigt das Paket `pyzbar`. Alternativ können Sie Barcodes über einen Handscanner in Tab 2 oder Tab 6 nutzen.")
+            st.warning("ℹ️ Hinweis: Die automatische Barcode-Erkennung benötigt das Paket `pyzbar`.")
 
         foto = st.camera_input("Barcode-Foto aufnehmen")
         if foto:
             image = Image.open(foto)
             st.image(image, caption="Aufgenommenes Foto", width=300)
 
+            erfasster_code = ""
             if PYZBAR_AVAILABLE:
                 try:
                     decoded_objects = decode(image)
                     if decoded_objects:
-                        for obj in decoded_objects:
-                            barcode_data = obj.data.decode('utf-8')
-                            st.success(f"🎯 **Erfolgreich ausgelesener Barcode:** `{barcode_data}`")
-                            
-                            # Im Session State speichern, damit Tab 6 darauf zugreifen kann
-                            st.session_state["gescannter_barcode"] = barcode_data
-                            st.info("💡 Die Nummer wurde im Zwischenspeicher hinterlegt. Wechseln Sie jetzt in den Reiter **'➕ Artikel anlegen'**, dort wird die Artikelnummer automatisch eingetragen!")
-                    else:
-                        st.warning("⚠️ Kein Barcode auf dem Foto erkannt. Versuchen Sie es mit etwas mehr Licht oder näher am Strichcode.")
+                        erfasster_code = decoded_objects[0].data.decode('utf-8')
+                        st.success(f"🎯 **Erfolgreich ausgelesener Barcode:** `{erfasster_code}`")
                 except Exception as e:
-                    st.error(f"Fehler beim Auslesen des Barcodes: {e}")
+                    st.error(f"Fehler beim Auslesen: {e}")
+
+            # Zusätzliches manuelles Textfeld, falls die Bilderkennung den Code nicht fehlerfrei trifft
+            st.markdown("---")
+            manueller_code = st.text_input("Gelesenen Barcode bestätigen / korrigieren", value=erfasster_code)
+
+            if st.button("🚀 Code für 'Artikel anlegen' übernehmen", type="primary"):
+                if manueller_code:
+                    st.session_state["aktiver_barcode"] = manueller_code
+                    st.toast(f"✅ Code '{manueller_code}' übernommen! Wechseln Sie nun zu 'Artikel anlegen'.", icon="🎉")
+                else:
+                    st.warning("Bitte geben Sie eine Nummer ein.")
 
     # --- TAB 4: BARCODE-DRUCKER & ETIKETTEN ---
     with tabs[3]:
@@ -188,7 +193,7 @@ def render_lager_verwaltung(supabase):
             eticket_optionen = {f"{m['bezeichnung']} (Code: {m.get('artikelnummer', 'Keiner')})": m for m in material_liste if m.get('artikelnummer')}
             
             if not eticket_optionen:
-                st.info("💡 Bislang haben Artikel keine Artikelnummer/Barcode hinterlegt. Vergeben Sie beim Anlegen oder Bearbeiten von Artikeln eine Artikelnummer, um hier Etiketten zu drucken.")
+                st.info("💡 Bislang haben Artikel keine Artikelnummer/Barcode hinterlegt.")
             else:
                 ausgewaehlte_labels = st.multiselect("Artikel für Etikettendruck wählen", options=list(eticket_optionen.keys()))
 
@@ -201,14 +206,13 @@ def render_lager_verwaltung(supabase):
                         col_e1, col_e2 = st.columns([1, 2])
                         with col_e1:
                             try:
-                                # Barcode mit Code128 erzeugen
                                 EAN = barcode.get_class('code128')
                                 rv = BytesIO()
                                 ean = EAN(code_val, writer=ImageWriter())
                                 ean.write(rv)
                                 st.image(rv.getvalue(), width=200)
                             except Exception as e:
-                                st.error(f"Fehler beim Generieren des Barcodes für {code_val}: {e}")
+                                st.error(f"Fehler: {e}")
                         with col_e2:
                             st.write(f"**Bezeichnung:** {mat.get('bezeichnung')}")
                             st.write(f"**Lagerort:** {mat.get('lagerort', 'Hauptlager')}")
@@ -288,14 +292,14 @@ def render_lager_verwaltung(supabase):
         if not darf_bearbeiten:
             st.error("⛔ Keine Berechtigung.")
         else:
-            # Automatisch ausgelesenen Barcode abgreifen, falls vorhanden
-            vorgeschlagener_code = st.session_state.pop("gescannter_barcode", "")
+            # Barcode aus dem Session-State abgreifen
+            vorbelegter_code = st.session_state.get("aktiver_barcode", "")
 
             with st.form("neuer_artikel_form"):
                 col_a1, col_a2 = st.columns(2)
                 with col_a1:
                     n_bezeichnung = st.text_input("Artikelbezeichnung *", placeholder="z.B. NYM-J 3x1.5")
-                    n_artnr = st.text_input("Artikelnummer / Barcode", value=vorgeschlagener_code, placeholder="z.B. per Kamera gescannt oder EAN")
+                    n_artnr = st.text_input("Artikelnummer / Barcode", value=vorbelegter_code, placeholder="z.B. per Kamera gescannt oder EAN")
                     n_kategorie = st.selectbox("Kategorie", ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug"])
                 with col_a2:
                     n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])
@@ -321,6 +325,11 @@ def render_lager_verwaltung(supabase):
                                 "soll_bestand": n_soll,
                                 "ist_bestand": n_ist
                             }).execute()
+                            
+                            # Nach erfolgreichem Speichern den temporären Barcode aus dem State löschen
+                            if "aktiver_barcode" in st.session_state:
+                                del st.session_state["aktiver_barcode"]
+
                             st.toast(f"Artikel '{n_bezeichnung}' angelegt!", icon="✅")
                             st.rerun()
                         except Exception as e:

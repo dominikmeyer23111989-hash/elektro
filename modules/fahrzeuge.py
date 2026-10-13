@@ -63,11 +63,9 @@ def render_fahrzeug_warnungen_sidebar(supabase):
     st.sidebar.markdown("#### 🚨 Flotten-Warnungen")
 
     try:
-        # Offene Mängel zählen
         m_res = supabase.table("fahrzeug_maengel").select("id, prioritaet", count="exact").eq("status", "Offen").execute()
         offene_maengel_count = m_res.count if m_res.count is not None else len(m_res.data or [])
         
-        # Fahrzeuge auf TÜV in den nächsten 4 Wochen prüfen (tuev_monat Format "MM.YYYY" oder "MM/YYYY")
         f_res = supabase.table("fahrzeuge").select("kennzeichen, tuev_monat").execute()
         fahrzeuge = f_res.data or []
         
@@ -78,27 +76,22 @@ def render_fahrzeug_warnungen_sidebar(supabase):
             t_str = f.get("tuev_monat")
             if t_str:
                 try:
-                    # Normalisiere Trennzeichen
                     t_clean = t_str.replace("/", ".")
                     teile = t_clean.split(".")
                     if len(teile) == 2:
                         monat = int(teile[0])
                         jahr = int(teile[1])
-                        # TÜV gilt bis zum letzten Tag des Monats
                         if monat == 12:
                             tuev_datum = date(jahr + 1, 1, 1)
                         else:
                             tuev_datum = date(jahr, monat + 1, 1)
                         
-                        # Differenz in Tagen
                         tage_bis_tuev = (tuev_datum - heute).days
-                        # Warnung wenn unter 30 Tage oder bereits überzogen
                         if tage_bis_tuev <= 30:
                             tuev_warnungen.append(f"{f.get('kennzeichen')} ({t_str})")
                 except Exception:
                     pass
 
-        # Ausgabe in Sidebar
         if offene_maengel_count > 0:
             st.sidebar.error(f"⚠️ **{offene_maengel_count} offene Mängelmeldung(en)!**")
         
@@ -111,13 +104,33 @@ def render_fahrzeug_warnungen_sidebar(supabase):
     except Exception:
         st.sidebar.info("Flotten-Check aktiv")
 
+def hat_recht(modul_id, aktion="sehen"):
+    """Prüft über die app.py-Logik, ob das Recht vorliegt."""
+    user = st.session_state.get("user_data", {})
+    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+        return True
+    rechte = user.get("rechte", [])
+    return f"{modul_id}_{aktion}" in rechte
+
 def render_fahrzeug_verwaltung(supabase):
     st.title("🚗 6. Fahrzeugflotte & Mängelmeldungen")
     st.caption("Verwalten Sie Ihre Firmenwagen, überwachen Sie den Status und melden Sie Defekte direkt in Echtzeit.")
 
+    if not hat_recht("6", "sehen"):
+        st.error("⛔ Sie haben keine Berechtigung, das Flottenmodul aufzurufen.")
+        return
+
+    darf_erstellen = hat_recht("6", "erstellen")
+    darf_bearbeiten = hat_recht("6", "bearbeiten")
+
+    # Radio-Optionen dynamisch aufbauen
+    menu_optionen = ["🚙 Flottenübersicht & Stammdaten", "🚨 Mängelmeldungen & Schäden"]
+    if darf_erstellen:
+        menu_optionen.append("➕ Neues Fahrzeug anlegen")
+
     sub_menu = st.radio(
         "Bereich auswählen",
-        options=["🚙 Flottenübersicht & Stammdaten", "🚨 Mängelmeldungen & Schäden", "➕ Neues Fahrzeug anlegen"],
+        options=menu_optionen,
         horizontal=True
     )
 
@@ -169,7 +182,6 @@ def render_fahrzeug_verwaltung(supabase):
         sel_fahrzeug = next(f for f in fahrzeuge_liste if f["id"] == sel_f_id)
         zugehoerige_maengel = [m for m in maengel_liste if m.get("fahrzeug_id") == sel_f_id]
 
-        # TÜV-Monat & Jahr aufteilen für Selectboxen
         akt_tuev = sel_fahrzeug.get("tuev_monat") or "12.2026"
         try:
             p_monat, p_jahr = akt_tuev.replace("/", ".").split(".")
@@ -179,55 +191,59 @@ def render_fahrzeug_verwaltung(supabase):
             def_m_idx = 0
             def_j_idx = 2
 
+        if not darf_bearbeiten:
+            st.info("ℹ️ Ihr Account hat Leserechte für die Flotte. Sie können keine Änderungen an Fahrzeugen speichern.")
+
         with st.form("fahrzeug_edit_form"):
             col1, col2 = st.columns(2)
             with col1:
-                e_kennzeichen = st.text_input("Kennzeichen *", value=sel_fahrzeug.get("kennzeichen"))
-                e_typ = st.text_input("Fahrzeug-Typ / Modell *", value=sel_fahrzeug.get("fahrzeug_typ"))
-                e_baujahr = st.number_input("Baujahr", min_value=1990, max_value=2030, value=int(sel_fahrzeug.get("baujahr") or 2022))
+                e_kennzeichen = st.text_input("Kennzeichen *", value=sel_fahrzeug.get("kennzeichen"), disabled=not darf_bearbeiten)
+                e_typ = st.text_input("Fahrzeug-Typ / Modell *", value=sel_fahrzeug.get("fahrzeug_typ"), disabled=not darf_bearbeiten)
+                e_baujahr = st.number_input("Baujahr", min_value=1990, max_value=2030, value=int(sel_fahrzeug.get("baujahr") or 2022), disabled=not darf_bearbeiten)
             with col2:
                 st.write("TÜV fällig (Monat / Jahr)")
                 c_m1, c_m2 = st.columns(2)
                 with c_m1:
-                    e_tuev_monat = st.selectbox("Monat", [f"{i:02d}" for i in range(1, 13)], index=def_m_idx)
+                    e_tuev_monat = st.selectbox("Monat", [f"{i:02d}" for i in range(1, 13)], index=def_m_idx, disabled=not darf_bearbeiten)
                 with c_m2:
-                    e_tuev_jahr = st.selectbox("Jahr", [2024, 2025, 2026, 2027, 2028, 2029], index=def_j_idx)
+                    e_tuev_jahr = st.selectbox("Jahr", [2024, 2025, 2026, 2027, 2028, 2029], index=def_j_idx, disabled=not darf_bearbeiten)
 
-                e_km = st.number_input("Kilometerstand", min_value=0, value=int(sel_fahrzeug.get("kilometerstand") or 0), step=1000)
-                e_status = st.selectbox("Status", ["Einsatzbereit", "In Werkstatt", "Gesperrt / Defekt"], index=["Einsatzbereit", "In Werkstatt", "Gesperrt / Defekt"].index(sel_fahrzeug.get("status", "Einsatzbereit")))
+                e_km = st.number_input("Kilometerstand", min_value=0, value=int(sel_fahrzeug.get("kilometerstand") or 0), step=1000, disabled=not darf_bearbeiten)
+                e_status = st.selectbox("Status", ["Einsatzbereit", "In Werkstatt", "Gesperrt / Defekt"], index=["Einsatzbereit", "In Werkstatt", "Gesperrt / Defekt"].index(sel_fahrzeug.get("status", "Einsatzbereit")), disabled=not darf_bearbeiten)
 
-            e_notizen = st.text_area("Ausstattung / Tankkarte / Hinweise", value=sel_fahrzeug.get("notizen") or "")
+            e_notizen = st.text_area("Ausstattung / Tankkarte / Hinweise", value=sel_fahrzeug.get("notizen") or "", disabled=not darf_bearbeiten)
 
-            col_b1, col_b2 = st.columns(2)
-            with col_b1:
-                btn_update = st.form_submit_button("💾 Fahrzeug aktualisieren", type="primary", use_container_width=True)
-            with col_b2:
-                btn_del = st.form_submit_button("🗑️ Fahrzeug löschen", use_container_width=True)
+            if darf_bearbeiten:
+                col_b1, col_b2 = st.columns(2)
+                with col_b1:
+                    btn_update = st.form_submit_button("💾 Fahrzeug aktualisieren", type="primary", use_container_width=True)
+                with col_b2:
+                    btn_del = st.form_submit_button("🗑️ Fahrzeug löschen", use_container_width=True)
 
-            if btn_update:
-                tuev_kombiniert = f"{e_tuev_monat}.{e_tuev_jahr}"
-                try:
-                    supabase.table("fahrzeuge").update({
-                        "kennzeichen": e_kennzeichen,
-                        "fahrzeug_typ": e_typ,
-                        "baujahr": e_baujahr,
-                        "tuev_monat": tuev_kombiniert,
-                        "kilometerstand": e_km,
-                        "status": e_status,
-                        "notizen": e_notizen
-                    }).eq("id", sel_f_id).execute()
-                    st.success("Fahrzeugdaten erfolgreich aktualisiert!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Fehler: {e}")
+                if btn_update:
+                    tuev_kombiniert = f"{e_tuev_monat}.{e_tuev_jahr}"
+                    try:
+                        supabase.table("fahrzeuge").update({
+                            "kennzeichen": e_kennzeichen,
+                            "fahrzeug_typ": e_typ,
+                            "baujahr": e_baujahr,
+                            "tuev_monat": tuev_kombiniert,
+                            "kilometerstand": e_km,
+                            "status": e_status,
+                            "notizen": e_notizen
+                        }).eq("id", sel_f_id).execute()
+                        st.success("Fahrzeugdaten erfolgreich aktualisiert!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler: {e}")
 
-            if btn_del:
-                try:
-                    supabase.table("fahrzeuge").delete().eq("id", sel_f_id).execute()
-                    st.success("Fahrzeug gelöscht!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Fehler beim Löschen: {e}")
+                if btn_del:
+                    try:
+                        supabase.table("fahrzeuge").delete().eq("id", sel_f_id).execute()
+                        st.success("Fahrzeug gelöscht!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler beim Löschen: {e}")
 
         st.markdown("---")
         pdf_bytes = generate_fahrzeug_bericht_pdf(sel_fahrzeug, zugehoerige_maengel)
@@ -264,15 +280,16 @@ def render_fahrzeug_verwaltung(supabase):
                     st.write(f"**Beschreibung:** {m.get('beschreibung')}")
                     st.write(f"**Aktueller Status:** {m.get('status')}")
 
-                    new_status = st.selectbox("Status bearbeiten", ["Offen", "In Bearbeitung", "Erledigt"], index=["Offen", "In Bearbeitung", "Erledigt"].index(m.get("status", "Offen")), key=f"status_{m['id']}")
-                    
-                    if st.button("Status speichern", key=f"btn_status_{m['id']}"):
-                        try:
-                            supabase.table("fahrzeug_maengel").update({"status": new_status}).eq("id", m["id"]).execute()
-                            st.success("Status aktualisiert!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Fehler: {e}")
+                    if darf_bearbeiten:
+                        new_status = st.selectbox("Status bearbeiten", ["Offen", "In Bearbeitung", "Erledigt"], index=["Offen", "In Bearbeitung", "Erledigt"].index(m.get("status", "Offen")), key=f"status_{m['id']}")
+                        
+                        if st.button("Status speichern", key=f"btn_status_{m['id']}"):
+                            try:
+                                supabase.table("fahrzeug_maengel").update({"status": new_status}).eq("id", m["id"]).execute()
+                                st.success("Status aktualisiert!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Fehler: {e}")
 
         st.markdown("---")
         st.subheader("➕ Neuen Mangel / Schaden melden")
@@ -310,7 +327,7 @@ def render_fahrzeug_verwaltung(supabase):
                             st.error(f"Fehler beim Speichern: {e}")
 
     # --- BEREICH 3: NEUES FAHRZEUG ANLEGEN ---
-    elif sub_menu == "➕ Neues Fahrzeug anlegen":
+    elif sub_menu == "➕ Neues Fahrzeug anlegen" and darf_erstellen:
         st.subheader("Neues Fahrzeug zur Flotte hinzufügen")
 
         with st.form("neues_fahrzeug_form"):

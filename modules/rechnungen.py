@@ -78,8 +78,9 @@ def generate_rechnung_pdf(rechnung, positionen):
 
 def render_rechnungen_verwaltung(supabase):
     st.title("💶 11. Rechnungs- & Abrechnungsmodul")
-    st.caption("Rechnen Sie Aufträge ab, übernehmen Sie Lager-Materialien und exportieren Sie Rechnungen als PDF.")
+    st.caption("Rechnen Sie Aufträge ab, verknüpfen Sie Lagerartikel mit individuellen Preisen und exportieren Sie Rechnungen als PDF.")
 
+    # 1. Daten robust und separat laden (verhindert jegliche Join-Fehler)
     try:
         r_res = supabase.table("rechnungen").select("*").order("erstellt_am", desc=True).execute()
         rechnungen_liste = r_res.data or []
@@ -93,8 +94,21 @@ def render_rechnungen_verwaltung(supabase):
         vorlagen_liste = []
 
     try:
-        # Korrigierte Abfrage ohne nicht-existierende Spalten
-        a_res = supabase.table("auftraege").select("id, auftragsnummer, freitext_kunde, arbeiten, status, kunden(vorname, nachname)").order("erstellt_am", desc=True).execute()
+        k_res = supabase.table("kunden").select("id, vorname, nachname").execute()
+        kunden_dict = {k["id"]: f"{k.get('vorname', '')} {k.get('nachname', '')}".strip() for k in (k_res.data or [])}
+    except Exception:
+        kunden_dict = {}
+
+    try:
+        mat_res = supabase.table("lager_material").select("id, bezeichnung, einheit, ist_bestand").order("bezeichnung").execute()
+        lager_material_liste = mat_res.data or []
+        lager_dict = {m["id"]: m for m in lager_material_liste}
+    except Exception:
+        lager_material_liste = []
+        lager_dict = {}
+
+    try:
+        a_res = supabase.table("auftraege").select("*").order("erstellt_am", desc=True).execute()
         alle_auftraege = a_res.data or []
     except Exception as e:
         alle_auftraege = []
@@ -189,7 +203,7 @@ def render_rechnungen_verwaltung(supabase):
     # =========================================================================
     with tabs[1]:
         st.subheader("Auftrag & Lager-Material in Rechnung übernehmen")
-        st.caption("Wählen Sie einen Auftrag aus. Die App liest automatisch den Arbeitsbericht und alle im Auftrag gebuchten Lager- / Fremdmaterialien aus.")
+        st.caption("Wählen Sie einen Auftrag aus. Die App übernimmt automatisch den Arbeitsbericht und alle im Auftrag gebuchten Lagerartikel.")
 
         if "rechnung_positionen_temp" not in st.session_state:
             st.session_state["rechnung_positionen_temp"] = []
@@ -197,24 +211,31 @@ def render_rechnungen_verwaltung(supabase):
         if not alle_auftraege:
             st.warning("⚠️ Keine Aufträge in der Datenbank gefunden.")
         else:
+            # Aufträge für das Dropdown aufbereiten mit Kundennamen aus dem Dictionary
+            def get_auftrag_label(a):
+                k_name = kunden_dict.get(a.get("kunde_id"), "") or a.get("freitext_kunde") or "Unbekannter Kunde"
+                status = a.get("status", "Unbekannt")
+                return f"[{status}] Auftrag {a.get('auftragsnummer')} | Kunde: {k_name}"
+
             ausgewaehlter_auftrag = st.selectbox(
                 "Auftrag auswählen",
                 options=[None] + alle_auftraege,
-                format_func=lambda x: "--- Auftrag wählen ---" if x is None else f"[{x.get('status', 'Unbekannt')}] Auftrag {x.get('auftragsnummer')} | Kunde: {x.get('kunden', {}).get('nachname', '') or x.get('freitext_kunde', 'Unbekannt')}"
+                format_func=lambda x: "--- Auftrag wählen ---" if x is None else get_auftrag_label(x)
             )
 
             if ausgewaehlter_auftrag:
-                k = ausgewaehlter_auftrag.get("kunden") or {}
-                k_name_auto = f"{k.get('vorname', '')} {k.get('nachname', '')}".strip()
-                if not k_name_auto:
-                    k_name_auto = ausgewaehlter_auftrag.get("freitext_kunde", "Kunde")
+                k_name_auto = kunden_dict.get(ausgewaehlter_auftrag.get("kunde_id"), "") or ausgewaehlter_auftrag.get("freitext_kunde", "Kunde")
 
                 st.success(f"Auftrag {ausgewaehlter_auftrag.get('auftragsnummer')} (Status: {ausgewaehlter_auftrag.get('status')}) für Kunde **{k_name_auto}** ausgewählt.")
                 st.write(f"📝 **Arbeitsbericht:** {ausgewaehlter_auftrag.get('arbeiten', '-')}")
+                
+                has_k_sig = bool(ausgewaehlter_auftrag.get('kunde_unterschrift'))
+                has_m_sig = bool(ausgewaehlter_auftrag.get('mitarbeiter_unterschrift'))
+                st.write(f"✍️ **Unterschriften:** Kunde: {'✅ Vorhanden' if has_k_sig else '❌ Fehlt'} | Monteur: {'✅ Vorhanden' if has_m_sig else '❌ Fehlt'}")
 
-                # Lager-Material des Auftrags aus auftrag_material laden
+                # Lager-Material des Auftrags laden
                 try:
-                    am_res = supabase.table("auftrag_material").select("*, lager_material(bezeichnung, einheit)").eq("auftrag_id", ausgewaehlter_auftrag["id"]).execute()
+                    am_res = supabase.table("auftrag_material").select("*").eq("auftrag_id", ausgewaehlter_auftrag["id"]).execute()
                     auftrag_mat = am_res.data or []
                 except Exception as e:
                     auftrag_mat = []
@@ -236,8 +257,9 @@ def render_rechnungen_verwaltung(supabase):
                             if am.get("ist_fremdmaterial"):
                                 bez = am.get("freitext_bezeichnung", "Fremdteil")
                             else:
-                                minfo = am.get("lager_material") or {}
-                                bez = minfo.get("bezeichnung", "Lagerartikel")
+                                mat_id = am.get("material_id")
+                                mat_info = lager_dict.get(mat_id, {})
+                                bez = mat_info.get("bezeichnung", "Lagerartikel")
                             
                             st.session_state["rechnung_positionen_temp"].append({
                                 "beschreibung": f"Material: {bez}",
@@ -251,7 +273,7 @@ def render_rechnungen_verwaltung(supabase):
                     st.rerun()
 
         st.markdown("---")
-        st.markdown("##### 🛠️ Rechnung bearbeiten & finalisieren")
+        st.markdown("##### 🛠️ Rechnung bearbeiten, Preise anpassen & finalisieren")
 
         with st.form("neue_rechnung_form"):
             col1, col2 = st.columns(2)
@@ -262,32 +284,42 @@ def render_rechnungen_verwaltung(supabase):
             with col2:
                 r_mwst = st.number_input("Mehrwertsteuersatz (%)", min_value=0.0, value=19.0, step=0.5)
 
-            st.markdown("##### Aus Preiskatalog hinzufügen")
-            col_katalog1, col_katalog2, col_katalog3 = st.columns([3, 1, 1])
-            with col_katalog1:
-                sel_vorlage = st.selectbox(
-                    "Preiskatalog-Vorlage wählen",
-                    options=[None] + vorlagen_liste,
-                    format_func=lambda x: "--- Vorlage wählen ---" if x is None else f"{x['bezeichnung']} ({x['einzelpreis_netto']:.2f} EUR / {x['einheit']})"
+            st.markdown("##### Direkt aus Lager oder Preiskatalog hinzufügen")
+            col_kat1, col_kat2, col_kat3 = st.columns([3, 1, 1])
+            with col_kat1:
+                # Kombinierte Auswahl aus Lager-Materialien und Preiskatalog-Vorlagen
+                katalog_optionen = [None] + [{"typ": "lager", "item": m} for m in lager_material_liste] + [{"typ": "vorlage", "item": v} for v in vorlagen_liste]
+                sel_katalog_item = st.selectbox(
+                    "Artikel / Vorlage wählen",
+                    options=katalog_optionen,
+                    format_func=lambda x: "--- Artikel wählen ---" if x is None else (f"[Lager] {x['item']['bezeichnung']} (Bestand: {x['item']['ist_bestand']} {x['item'].get('einheit', 'Stk.')})" if x['typ'] == 'lager' else f"[Vorlage] {x['item']['bezeichnung']} ({x['item']['einzelpreis_netto']:.2f} EUR)")
                 )
-            with col_katalog2:
-                vorl_menge = st.number_input("Menge", min_value=0.1, value=1.0, step=0.5)
-            with col_katalog3:
+            with col_kat2:
+                kat_menge = st.number_input("Menge", min_value=0.1, value=1.0, step=0.5, key="kat_menge_input")
+            with col_kat3:
                 st.write("")
                 st.write("")
-                btn_vorlage_add = st.form_submit_button("➕ Vorlage hinzufügen")
+                btn_kat_add = st.form_submit_button("➕ Hinzufügen")
 
-            if btn_vorlage_add and sel_vorlage:
+            if btn_kat_add and sel_katalog_item:
+                item_data = sel_katalog_item["item"]
+                if sel_katalog_item["typ"] == "lager":
+                    bez = item_data["bezeichnung"]
+                    preis = 10.0 # Standardpreis für Lagerartikel zum Anpassen
+                else:
+                    bez = item_data["bezeichnung"]
+                    preis = float(item_data["einzelpreis_netto"])
+
                 st.session_state["rechnung_positionen_temp"].append({
-                    "beschreibung": sel_vorlage["bezeichnung"],
-                    "menge": vorl_menge,
-                    "einzelpreis_netto": float(sel_vorlage["einzelpreis_netto"])
+                    "beschreibung": bez,
+                    "menge": kat_menge,
+                    "einzelpreis_netto": preis
                 })
                 st.rerun()
 
             st.markdown("---")
             st.markdown("##### Freie Position hinzufügen")
-            p_beschr = st.text_input("Positionsbeschreibung", placeholder="z.B. Zusätzliche Steckdose installiert")
+            p_beschr = st.text_input("Positionsbeschreibung", placeholder="z.B. Monteurstunde / Sonderarbeit")
             col_p1, col_p2 = st.columns(2)
             with col_p1:
                 p_menge = st.number_input("Menge / Stunden", min_value=0.1, value=1.0, step=0.5, key="p_menge_neu")
@@ -307,7 +339,7 @@ def render_rechnungen_verwaltung(supabase):
             submitted_rechnung = st.form_submit_button("💾 Rechnung speichern & ausstellen", type="primary", use_container_width=True)
 
         if st.session_state["rechnung_positionen_temp"]:
-            st.markdown("##### 📋 Aktuelle Rechnungspositionen:")
+            st.markdown("##### 📋 Aktuelle Rechnungspositionen (Preise & Mengen direkt anpassbar):")
             
             idx_to_del = None
             for idx, p in enumerate(st.session_state["rechnung_positionen_temp"]):

@@ -15,7 +15,7 @@ class AuftragPDF(FPDF):
         self.set_font('Helvetica', 'B', 14)
         self.cell(0, 8, 'ELEKTRO-ENTERPRISE - MONTAGESCHEIN / ABNAHMEPROTOKOLL', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.set_font('Helvetica', 'I', 9)
-        self.cell(0, 5, 'Offizieller Arbeitsauftrag inklusive Objekt-, Team-, Fahrzeug- und Materialdaten', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
+        self.cell(0, 5, 'Offizieller Arbeitsauftrag inklusive Objekt-, Team-, Fahrzeug- und Materialplanung', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
         self.ln(5)
 
     def footer(self):
@@ -137,7 +137,7 @@ def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste, material_posi
     pdf.ln(4)
 
     pdf.set_font('Helvetica', 'B', 11)
-    pdf.cell(0, 6, "Verbrauchtes Material & Bauteile (Lager & Vor Ort):", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, "Geplantes / Verbrautes Material (Soll-Liste & Vor Ort):", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
     
     if material_positionen:
@@ -152,11 +152,7 @@ def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste, material_posi
                 einheit_str = mat_info.get('einheit', 'Stk.')
             pdf.cell(0, 5, clean_text(f"- {menge} {einheit_str} {bez}"), new_x="LMARGIN", new_y="NEXT")
     else:
-        pdf.cell(0, 5, clean_text("Noch kein Material direkt zugeordnet."), new_x="LMARGIN", new_y="NEXT")
-    
-    if a.get('benoetigtes_material'):
-        pdf.ln(2)
-        pdf.multi_cell(0, 5, clean_text(f"Zusatznotizen Material: {a.get('benoetigtes_material')}"))
+        pdf.cell(0, 5, clean_text("Kein Material zugeordnet."), new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(6)
 
@@ -177,7 +173,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_auftraege_verwaltung(supabase):
     st.title("📋 4. Auftrags- & Einsatzmanagement")
-    st.caption("Planen Sie reguläre Baustellen oder erfassen Sie Notdienste im Handumdrehen inkl. direkter Lager-Verknüpfung.")
+    st.caption("Planen Sie Aufträge inklusive Material-Bedarfsliste (Soll-Stückliste) und Bestandsprüfung.")
 
     if not hat_recht("4", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Auftragsmodul aufzurufen.")
@@ -241,7 +237,7 @@ def render_auftraege_verwaltung(supabase):
     tabs_optionen = ["📋 Auftragsübersicht"]
     darf_erstellen = hat_recht("4", "erstellen")
     if darf_erstellen:
-        tabs_optionen.append("➕ Neuen Auftrag anlegen")
+        tabs_optionen.append("➕ Neuen Auftrag anlegen & Material planen")
 
     tabs = st.tabs(tabs_optionen)
 
@@ -277,7 +273,6 @@ def render_auftraege_verwaltung(supabase):
                 fahrzeug = a.get("fahrzeuge") or {}
                 team = a.get("team", [])
 
-                # Verknüpftes Material zu diesem Auftrag laden
                 try:
                     am_res = supabase.table("auftrag_material").select("*, lager_material(bezeichnung, einheit, artikelnummer)").eq("auftrag_id", a["id"]).execute()
                     auftrag_materialien = am_res.data or []
@@ -303,9 +298,8 @@ def render_auftraege_verwaltung(supabase):
                     st.write(f"**Objektadresse:** {g_adr}")
                     st.write(f"**Auszuführende Arbeiten:** {a.get('arbeiten')}")
 
-                    # Aktuelle Material-Liste als Tabelle anzeigen
                     st.markdown("---")
-                    st.write("📦 **Dem Auftrag zugeordnetes Material:**")
+                    st.write("📦 **Dem Auftrag zugeordnetes Material (Soll / Ist):**")
                     if auftrag_materialien:
                         mat_anzeige = []
                         for am in auftrag_materialien:
@@ -322,7 +316,7 @@ def render_auftraege_verwaltung(supabase):
                         st.info("Noch kein Material für diesen Auftrag erfasst.")
 
                     st.markdown("---")
-                    st.write("🛠️ **Material hinzufügen & Status bearbeiten**")
+                    st.write("🛠️ **Material nachtragen & Status bearbeiten**")
 
                     with st.form(f"auftrag_edit_{a['id']}"):
                         neuer_status = st.selectbox(
@@ -338,10 +332,9 @@ def render_auftraege_verwaltung(supabase):
                             format_func=lambda x: "--- Kein Lagerartikel wählen ---" if x is None else f"{x['bezeichnung']} (Bestand: {x['ist_bestand']} {x.get('einheit', 'Stk.')} | Ort: {x.get('lagerort', '-')})",
                             key=f"select_mat_{a['id']}"
                         )
-                        menge_lager = st.number_input("Menge (Lagerartikel)", min_value=1, value=1, step=1, key=f"menge_lager_{a['id']}")
+                        menge_lager = st.number_input("Menge", min_value=1, value=1, step=1, key=f"menge_lager_{a['id']}")
 
-                        st.markdown("Oder **Fremd- / Ad-hoc-Material** (z.B. Ersatzteil vom Baumarkt):")
-                        freitext_mat = st.text_input("Bezeichnung des Fremdteils", placeholder="z.B. Spezial-Relais Fabrikat X", key=f"free_mat_{a['id']}")
+                        freitext_mat = st.text_input("Oder Fremdteil / Ersatzteil (Freitext)", placeholder="z.B. Spezial-Relais", key=f"free_mat_{a['id']}")
                         menge_fremd = st.number_input("Menge (Fremdteil)", min_value=1, value=1, step=1, key=f"menge_fremd_{a['id']}")
 
                         neues_team = []
@@ -368,7 +361,7 @@ def render_auftraege_verwaltung(supabase):
                                 key=f"fzg_sel_{a['id']}"
                             )
 
-                        b_save = st.form_submit_button("💾 Änderungen & Material buchen", type="primary", use_container_width=True)
+                        b_save = st.form_submit_button("💾 Speichern & Lager buchen", type="primary", use_container_width=True)
                         if b_save:
                             try:
                                 update_payload = {"status": neuer_status}
@@ -410,7 +403,7 @@ def render_auftraege_verwaltung(supabase):
                                     team_inserts = [{"auftrag_id": a["id"], "mitarbeiter_id": m_id} for m_id in neues_team]
                                     supabase.table("auftrag_mitarbeiter").insert(team_inserts).execute()
 
-                                st.toast("Erfolgreich gespeichert und Lagerbestand angepasst!", icon="🎯")
+                                st.toast("Erfolgreich gespeichert!", icon="🎯")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Fehler beim Speichern: {e}")
@@ -474,16 +467,23 @@ def render_auftraege_verwaltung(supabase):
                         key=f"dl_{a['id']}"
                     )
 
+    # =========================================================================
+    # NEUEN AUFTRAG ANLEGEN MIT MATERIAL-PLANUNG (SOLL-LISTE) & BESTANDS-CHECK
+    # =========================================================================
     if darf_erstellen and len(tabs) > 1:
         with tabs[1]:
-            st.subheader("Neuen Auftrag anlegen (Regulär oder Notdienst)")
+            st.subheader("Neuen Auftrag anlegen & Materialbedarf planen")
+            st.caption("Planen Sie hier direkt das benötigte Material im Voraus. Die App prüft sofort, ob der Lagerbestand ausreicht oder ob Artikel nachbestellt werden müssen.")
+
+            # Initialisierung von Session State für die temporäre Materialliste beim Erstellen
+            if "neuer_auftrag_material_liste" not in st.session_state:
+                st.session_state["neuer_auftrag_material_liste"] = []
 
             with st.form("neuer_auftrag_form"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    # Automatische Auftragsnummer als Vorschlag (kann überschrieben oder leer gelassen werden)
-                    default_nr = f"NOTDIENST-{datetime.now().strftime('%Y%m%d-%H%M')}"
-                    n_auftragsnummer = st.text_input("Auftragsnummer (wird automatisch generiert, falls leer)", value=default_nr)
+                    default_nr = f"A-{datetime.now().strftime('%Y%m%d')}-01"
+                    n_auftragsnummer = st.text_input("Auftragsnummer (wird leer automatisch generiert)", value=default_nr)
                     
                     kunden_optionen = [None] + [k["id"] for k in kunden_liste]
                     n_kunde = st.selectbox(
@@ -502,7 +502,7 @@ def render_auftraege_verwaltung(supabase):
                     n_freitext_ort = st.text_input("Oder alternativer Auftragsort", placeholder="z.B. Bahnhofstraße 10, Bochum")
 
                     n_mieter_we = st.text_input("Mieter / WE / Etage (optional)", placeholder="z.B. WE 4, 2. Obergeschoss")
-                    n_status = st.selectbox("Initialer Status", ["In Bearbeitung", "Offener Auftrag", "In Planung", "Erledigt"], index=0)
+                    n_status = st.selectbox("Initialer Status", ["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"], index=0)
 
                 with col2:
                     if verfuegbare_mitarbeiter:
@@ -527,47 +527,133 @@ def render_auftraege_verwaltung(supabase):
                     with col_d1:
                         n_datum = st.date_input("Auftragsdatum", value=datetime.today(), format="DD.MM.YYYY")
                     with col_d2:
-                        n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.now().time())
-                        n_uhr_bis = st.time_input("Uhrzeit Bis", value=datetime.now().time())
+                        n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.strptime("08:00", "%H:%M").time())
+                        n_uhr_bis = st.time_input("Uhrzeit Bis", value=datetime.strptime("16:00", "%H:%M").time())
 
-                n_arbeiten = st.text_area("Auszuführende Arbeiten / Störungsbeschreibung *", placeholder="z.B. Notdienst: Stromausfall Keller, FI fliegt ständig...")
-                st.caption("💡 Hinweis: Material und Bauteile (Lagerartikel oder Fremdteile) fügen Sie direkt nach dem Erstellen im jeweiligen Auftrag in der Übersicht hinzu!")
+                n_arbeiten = st.text_area("Auszuführende Arbeiten / Leistungsbeschreibung *", placeholder="z.B. Wohnungsumbau, Zählerschrank erneuern...")
+                
+                submitted_auftrag = st.form_submit_button("💾 Auftrag anlegen & Material übernehmen", type="primary", use_container_width=True)
 
-                if st.form_submit_button("Sofort-Auftrag / Notdienst anlegen", type="primary", use_container_width=True):
-                    if not n_arbeiten:
-                        st.warning("Bitte zumindest eine kurze Beschreibung der auszuführenden Arbeiten angeben.")
-                    elif not n_team:
-                        st.warning("Bitte wählen Sie mindestens einen Mitarbeiter für das Einsatz-Team aus.")
+            # --- SEPARATER BEREICH FÜR DIE MATERIALPLANUNG BEIM ERSTELLEN ---
+            st.markdown("---")
+            st.subheader("📦 Material-Bedarfsplanung (Soll-Liste für diesen Auftrag)")
+            st.caption("Fügen Sie hier Artikel aus dem Lager hinzu. Die App prüft sofort, ob der Bestand reicht oder ob Artikel bestellt werden müssen.")
+
+            col_mat_add1, col_mat_add2, col_mat_add3 = st.columns([3, 1, 1])
+            with col_mat_add1:
+                plan_artikel = st.selectbox(
+                    "Artikel aus Lager auswählen",
+                    options=[None] + lager_material_liste,
+                    format_func=lambda x: "--- Artikel wählen ---" if x is None else f"{x['bezeichnung']} (Lagerbestand: {x['ist_bestand']} {x.get('einheit', 'Stk.')})",
+                    key="plan_select_artikel"
+                )
+            with col_mat_add2:
+                plan_menge = st.number_input("Benötigte Menge", min_value=1, value=1, step=1, key="plan_menge_artikel")
+            with col_mat_add3:
+                st.write("") # Spacer
+                st.write("")
+                if st.button("➕ Zur Liste hinzufügen", use_container_width=True):
+                    if plan_artikel:
+                        # Prüfen, ob Artikel schon in der temporären Liste ist
+                        existiert = False
+                        for item in st.session_state["neuer_auftrag_material_liste"]:
+                            if item["id"] == plan_artikel["id"]:
+                                item["menge"] += plan_menge
+                                existiert = True
+                                break
+                        if not existiert:
+                            st.session_state["neuer_auftrag_material_liste"].append({
+                                "id": plan_artikel["id"],
+                                "bezeichnung": plan_artikel["bezeichnung"],
+                                "einheit": plan_artikel.get("einheit", "Stk."),
+                                "ist_bestand": int(plan_artikel.get("ist_bestand", 0)),
+                                "menge": plan_menge
+                            })
+                        st.toast(f"Artikel '{plan_artikel['bezeichnung']}' hinzugefügt.", icon="✅")
+                        st.rerun()
+
+            # Anzeige der aktuellen Planungs-Liste mit Bestands-Check
+            if st.session_state["neuer_auftrag_material_liste"]:
+                st.markdown("##### 📋 Geplante Artikel für diesen Auftrag:")
+                anzeige_daten = []
+                for idx, item in enumerate(st.session_state["neuer_auftrag_material_liste"]):
+                    bestand = item["ist_bestand"]
+                    bedarf = item["menge"]
+                    einheit = item["einheit"]
+                    
+                    if bestand >= bedarf:
+                        status_text = "🟢 Genug auf Lager"
                     else:
-                        try:
-                            # Falls keine Auftragsnummer eingegeben wurde, automatisch eine generieren
-                            final_auftragsnummer = n_auftragsnummer.strip() if n_auftragsnummer and n_auftragsnummer.strip() else f"NOTDIENST-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                        fehlend = bedarf - bestand
+                        status_text = f"🔴 FEHLT! Noch {fehlend} {einheit} nachbestellen!"
 
-                            dt_von = datetime.combine(n_datum, n_uhr_von).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
-                            dt_bis = datetime.combine(n_datum, n_uhr_bis).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
+                    anzeige_daten.append({
+                        "Artikel": item["bezeichnung"],
+                        "Benötigt": f"{bedarf} {einheit}",
+                        "Lagerbestand": f"{bestand} {einheit}",
+                        "Status / Info": status_text
+                    })
+                
+                st.dataframe(pd.DataFrame(anzeige_daten), use_container_width=True, hide_index=True)
 
-                            auftrag_payload = {
-                                "auftragsnummer": final_auftragsnummer,
-                                "kunde_id": n_kunde,
-                                "freitext_kunde": n_freitext_kunde if not n_kunde else None,
-                                "gebaeude_id": n_gebaeude,
-                                "freitext_ort": n_freitext_ort if not n_gebaeude else None,
-                                "fahrzeug_id": n_fahrzeug,
-                                "arbeiten": n_arbeiten,
-                                "mieter_we": n_mieter_we,
-                                "termin_um": dt_von,
-                                "termin_bis": dt_bis,
-                                "benoetigtes_material": "",
-                                "status": n_status
-                            }
-                            res = supabase.table("auftraege").insert(auftrag_payload).execute()
+                if st.button("🗑️ Geplante Material-Liste leeren"):
+                    st.session_state["neuer_auftrag_material_liste"] = []
+                    st.rerun()
+            else:
+                st.info("Bisher noch keine Artikel für die Planung ausgewählt.")
+
+            # Wenn der Haupt-Button geklickt wurde, speichern wir den Auftrag UND die Materialliste in Supabase
+            if submitted_auftrag:
+                if not n_arbeiten:
+                    st.warning("Bitte auszuführende Arbeiten angeben.")
+                elif not n_team:
+                    st.warning("Bitte wählen Sie mindestens einen Mitarbeiter für das Einsatz-Team aus.")
+                else:
+                    try:
+                        final_auftragsnummer = n_auftragsnummer.strip() if n_auftragsnummer and n_auftragsnummer.strip() else f"A-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+                        dt_von = datetime.combine(n_datum, n_uhr_von).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
+                        dt_bis = datetime.combine(n_datum, n_uhr_bis).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
+
+                        auftrag_payload = {
+                            "auftragsnummer": final_auftragsnummer,
+                            "kunde_id": n_kunde,
+                            "freitext_kunde": n_freitext_kunde if not n_kunde else None,
+                            "gebaeude_id": n_gebaeude,
+                            "freitext_ort": n_freitext_ort if not n_gebaeude else None,
+                            "fahrzeug_id": n_fahrzeug,
+                            "arbeiten": n_arbeiten,
+                            "mieter_we": n_mieter_we,
+                            "termin_um": dt_von,
+                            "termin_bis": dt_bis,
+                            "benoetigtes_material": "",
+                            "status": n_status
+                        }
+                        res = supabase.table("auftraege").insert(auftrag_payload).execute()
+                        
+                        if res.data:
+                            neu_id = res.data[0]["id"]
                             
-                            if res.data:
-                                neu_id = res.data[0]["id"]
-                                team_inserts = [{"auftrag_id": neu_id, "mitarbeiter_id": m_id} for m_id in n_team]
-                                supabase.table("auftrag_mitarbeiter").insert(team_inserts).execute()
+                            # 1. Team zuweisen
+                            team_inserts = [{"auftrag_id": neu_id, "mitarbeiter_id": m_id} for m_id in n_team]
+                            supabase.table("auftrag_mitarbeiter").insert(team_inserts).execute()
 
-                            st.success(f"Auftrag {final_auftragsnummer} erfolgreich angelegt! Sie können nun im Tab 'Auftragsübersicht' direkt Material zuordnen.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Fehler beim Anlegen: {e}")
+                            # 2. Geplantes Material in auftrag_material eintragen (und ggf. für die Planung vormerken)
+                            if st.session_state["neuer_auftrag_material_liste"]:
+                                mat_inserts = []
+                                for m_item in st.session_state["neuer_auftrag_material_liste"]:
+                                    mat_inserts.append({
+                                        "auftrag_id": neu_id,
+                                        "material_id": m_item["id"],
+                                        "menge": m_item["menge"],
+                                        "ist_fremdmaterial": False
+                                    })
+                                supabase.table("auftrag_material").insert(mat_inserts).execute()
+
+                        # Session State zurücksetzen
+                        st.session_state["neuer_auftrag_material_liste"] = []
+
+                        st.success(f"Auftrag {final_auftragsnummer} inklusive Material-Soll-Liste erfolgreich angelegt!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler beim Anlegen: {e}")

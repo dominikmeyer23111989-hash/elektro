@@ -9,3 +9,4 @@ python-barcode
 pyzbar
 opencv-python-headless
 qrcode
+reportlab

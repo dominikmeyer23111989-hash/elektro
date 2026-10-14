@@ -101,7 +101,7 @@ def generate_rechnung_pdf(rechnung, positionen, auftrag_rec=None):
     if auftrag_rec:
         pdf.ln(8)
         pdf.set_font('Helvetica', 'B', 10)
-        pdf.cell(0, 6, clean_text(f"Auftragsreferenz: #{auftrag_rec.get('auftragsnummer', '-')"), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, clean_text(f"Auftragsreferenz: #{auftrag_rec.get('auftragsnummer', '-')}"), new_x="LMARGIN", new_y="NEXT")
         pdf.set_font('Helvetica', '', 9)
         pdf.multi_cell(0, 5, clean_text(f"Arbeitsbericht: {auftrag_rec.get('arbeiten', '-')}"))
         
@@ -295,7 +295,6 @@ def render_rechnungen_verwaltung(supabase):
 
                     st.markdown(f"**📝 Arbeitsbericht:**\n> {ausgewaehlter_auftrag.get('arbeiten', '-')}")
 
-                    # Verbrauchte Lagerartikel für diese Vorschau laden
                     try:
                         am_res = supabase.table("auftrag_material").select("*").eq("auftrag_id", ausgewaehlter_auftrag["id"]).execute()
                         auftrag_mat = am_res.data or []

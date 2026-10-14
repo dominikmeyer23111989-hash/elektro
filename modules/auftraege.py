@@ -177,7 +177,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_auftraege_verwaltung(supabase):
     st.title("📋 4. Auftrags- & Einsatzmanagement")
-    st.caption("Planen Sie Aufträge, weisen Sie Teams & Fahrzeuge zu und buchen Sie Material direkt aus dem Lager auf den Auftrag.")
+    st.caption("Planen Sie reguläre Baustellen oder erfassen Sie Notdienste im Handumdrehen inkl. direkter Lager-Verknüpfung.")
 
     if not hat_recht("4", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Auftragsmodul aufzurufen.")
@@ -271,8 +271,6 @@ def render_auftraege_verwaltung(supabase):
         if not sichtbare_auftraege:
             st.info("Keine Aufträge vorhanden oder aktuell keine Freigabe für Ihr Konto.")
         else:
-            darf_bearbeiten = True # Monteure dürfen am Auftrag arbeiten & Material buchen
-
             for a in sichtbare_auftraege:
                 kunde = a.get("kunden") or {}
                 gebaeude = a.get("gebaeude") or {}
@@ -373,22 +371,18 @@ def render_auftraege_verwaltung(supabase):
                         b_save = st.form_submit_button("💾 Änderungen & Material buchen", type="primary", use_container_width=True)
                         if b_save:
                             try:
-                                # 1. Status aktualisieren
                                 update_payload = {"status": neuer_status}
                                 if is_admin:
                                     update_payload["fahrzeug_id"] = neues_fahrzeug
                                 supabase.table("auftraege").update(update_payload).eq("id", a["id"]).execute()
 
-                                # 2. Lagerartikel hinzufügen & Bestand im Lager abziehen
                                 if ausgewaehlter_lager_artikel:
                                     mat_id = ausgewaehlter_lager_artikel['id']
                                     alter_b = int(ausgewaehlter_lager_artikel.get('ist_bestand', 0))
                                     neuer_b = max(0, alter_b - menge_lager)
 
-                                    # Lagerbestand updaten
                                     supabase.table("lager_material").update({"ist_bestand": neuer_b}).eq("id", mat_id).execute()
                                     
-                                    # Bewegungs-Log schreiben
                                     supabase.table("lager_bewegungen").insert({
                                         "material_id": mat_id,
                                         "art": "Ausbuchung",
@@ -396,7 +390,6 @@ def render_auftraege_verwaltung(supabase):
                                         "kommentar": f"Auftrag {a.get('auftragsnummer')} | Monteur: {current_user_name}"
                                     }).execute()
 
-                                    # In auftrag_material eintragen
                                     supabase.table("auftrag_material").insert({
                                         "auftrag_id": a["id"],
                                         "material_id": mat_id,
@@ -404,7 +397,6 @@ def render_auftraege_verwaltung(supabase):
                                         "ist_fremdmaterial": False
                                     }).execute()
 
-                                # 3. Fremdmaterial eintragen (berührt das Lager nicht)
                                 if freitext_mat.strip():
                                     supabase.table("auftrag_material").insert({
                                         "auftrag_id": a["id"],
@@ -484,12 +476,14 @@ def render_auftraege_verwaltung(supabase):
 
     if darf_erstellen and len(tabs) > 1:
         with tabs[1]:
-            st.subheader("Neuen Auftrag erstellen")
+            st.subheader("Neuen Auftrag anlegen (Regulär oder Notdienst)")
 
             with st.form("neuer_auftrag_form"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    n_auftragsnummer = st.text_input("Auftragsnummer *", value=f"A-{datetime.now().strftime('%Y%m%d')}-01")
+                    # Automatische Auftragsnummer als Vorschlag (kann überschrieben oder leer gelassen werden)
+                    default_nr = f"NOTDIENST-{datetime.now().strftime('%Y%m%d-%H%M')}"
+                    n_auftragsnummer = st.text_input("Auftragsnummer (wird automatisch generiert, falls leer)", value=default_nr)
                     
                     kunden_optionen = [None] + [k["id"] for k in kunden_liste]
                     n_kunde = st.selectbox(
@@ -508,7 +502,7 @@ def render_auftraege_verwaltung(supabase):
                     n_freitext_ort = st.text_input("Oder alternativer Auftragsort", placeholder="z.B. Bahnhofstraße 10, Bochum")
 
                     n_mieter_we = st.text_input("Mieter / WE / Etage (optional)", placeholder="z.B. WE 4, 2. Obergeschoss")
-                    n_status = st.selectbox("Initialer Status", ["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"], index=0)
+                    n_status = st.selectbox("Initialer Status", ["In Bearbeitung", "Offener Auftrag", "In Planung", "Erledigt"], index=0)
 
                 with col2:
                     if verfuegbare_mitarbeiter:
@@ -533,24 +527,27 @@ def render_auftraege_verwaltung(supabase):
                     with col_d1:
                         n_datum = st.date_input("Auftragsdatum", value=datetime.today(), format="DD.MM.YYYY")
                     with col_d2:
-                        n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.strptime("08:00", "%H:%M").time())
-                        n_uhr_bis = st.time_input("Uhrzeit Bis", value=datetime.strptime("16:00", "%H:%M").time())
+                        n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.now().time())
+                        n_uhr_bis = st.time_input("Uhrzeit Bis", value=datetime.now().time())
 
-                n_arbeiten = st.text_area("Auszuführende Arbeiten *", placeholder="z.B. Zählerschrank umbauen, Störung beseitigen...")
-                n_material = st.text_area("Zusatznotizen zum Material (optional)", placeholder="z.B. Besonderheiten bei Bauteilen...")
+                n_arbeiten = st.text_area("Auszuführende Arbeiten / Störungsbeschreibung *", placeholder="z.B. Notdienst: Stromausfall Keller, FI fliegt ständig...")
+                st.caption("💡 Hinweis: Material und Bauteile (Lagerartikel oder Fremdteile) fügen Sie direkt nach dem Erstellen im jeweiligen Auftrag in der Übersicht hinzu!")
 
-                if st.form_submit_button("Auftrag anlegen & zuweisen", type="primary", use_container_width=True):
-                    if not n_auftragsnummer or not n_arbeiten:
-                        st.warning("Bitte Auftragsnummer und Arbeiten angeben.")
+                if st.form_submit_button("Sofort-Auftrag / Notdienst anlegen", type="primary", use_container_width=True):
+                    if not n_arbeiten:
+                        st.warning("Bitte zumindest eine kurze Beschreibung der auszuführenden Arbeiten angeben.")
                     elif not n_team:
-                        st.warning("Bitte wählen Sie mindestens einen Mitarbeiter aus.")
+                        st.warning("Bitte wählen Sie mindestens einen Mitarbeiter für das Einsatz-Team aus.")
                     else:
                         try:
+                            # Falls keine Auftragsnummer eingegeben wurde, automatisch eine generieren
+                            final_auftragsnummer = n_auftragsnummer.strip() if n_auftragsnummer and n_auftragsnummer.strip() else f"NOTDIENST-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
                             dt_von = datetime.combine(n_datum, n_uhr_von).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
                             dt_bis = datetime.combine(n_datum, n_uhr_bis).astimezone(ZoneInfo("Europe/Berlin")).isoformat()
 
                             auftrag_payload = {
-                                "auftragsnummer": n_auftragsnummer,
+                                "auftragsnummer": final_auftragsnummer,
                                 "kunde_id": n_kunde,
                                 "freitext_kunde": n_freitext_kunde if not n_kunde else None,
                                 "gebaeude_id": n_gebaeude,
@@ -560,7 +557,7 @@ def render_auftraege_verwaltung(supabase):
                                 "mieter_we": n_mieter_we,
                                 "termin_um": dt_von,
                                 "termin_bis": dt_bis,
-                                "benoetigtes_material": n_material,
+                                "benoetigtes_material": "",
                                 "status": n_status
                             }
                             res = supabase.table("auftraege").insert(auftrag_payload).execute()
@@ -570,7 +567,7 @@ def render_auftraege_verwaltung(supabase):
                                 team_inserts = [{"auftrag_id": neu_id, "mitarbeiter_id": m_id} for m_id in n_team]
                                 supabase.table("auftrag_mitarbeiter").insert(team_inserts).execute()
 
-                            st.success(f"Auftrag {n_auftragsnummer} erfolgreich angelegt!")
+                            st.success(f"Auftrag {final_auftragsnummer} erfolgreich angelegt! Sie können nun im Tab 'Auftragsübersicht' direkt Material zuordnen.")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler beim Anlegen: {e}")

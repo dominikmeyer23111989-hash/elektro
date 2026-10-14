@@ -8,6 +8,16 @@ import qrcode
 import cv2
 import numpy as np
 
+# ReportLab für saubere PDF-Generierung
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    PDF_EXPORT_AVAILABLE = True
+except ImportError:
+    PDF_EXPORT_AVAILABLE = False
+
 # Robustere QR-Erkennung mit OpenCV
 try:
     qr_detector = cv2.QRCodeDetector()
@@ -21,19 +31,16 @@ def decodiere_qr_aus_bild(opencv_image):
     try:
         gray = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2GRAY)
         
-        # Direktversuch
         data, _, _ = qr_detector.detectAndDecode(gray)
         if data:
             return str(data).strip()
 
-        # Kontrastverstärkung (gegen schlechtes Licht / Schatten)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
         data, _, _ = qr_detector.detectAndDecode(enhanced)
         if data:
             return str(data).strip()
 
-        # Skalierungstest
         for scale in [0.5, 1.5, 2.0]:
             resized = cv2.resize(gray, (0, 0), fx=scale, fy=scale)
             data, _, _ = qr_detector.detectAndDecode(resized)
@@ -44,6 +51,54 @@ def decodiere_qr_aus_bild(opencv_image):
         pass
     return ""
 
+def generiere_pdf_bericht(titel, headers, daten):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=25, leftMargin=25, topMargin=30, bottomMargin=30)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    # Titel-Styling
+    title_style = ParagraphStyle(
+        'ReportTitle',
+        parent=styles['Heading1'],
+        fontSize=15,
+        textColor=colors.HexColor("#1f2937"),
+        spaceAfter=5
+    )
+    elements.append(Paragraph(titel, title_style))
+    
+    # Zeitstempel
+    date_style = ParagraphStyle(
+        'ReportDate',
+        parent=styles['Normal'],
+        fontSize=9,
+        textColor=colors.HexColor("#6b7280"),
+        spaceAfter=15
+    )
+    elements.append(Paragraph(f"Erstellt am: {datetime.now().strftime('%d.%m.%Y um %H:%M Uhr')}", date_style))
+    elements.append(Spacer(1, 5))
+    
+    # Tabellen-Daten aufbereiten
+    table_data = [headers] + daten
+    table = Table(table_data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#007BFF")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,0), 9),
+        ('BOTTOMPADDING', (0,0), (-1,0), 6),
+        ('BACKGROUND', (0,1), (-1,-1), colors.HexColor("#f9fafb")),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d1d5db")),
+        ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
+        ('FONTSIZE', (0,1), (-1,-1), 8),
+        ('BOTTOMPADDING', (0,1), (-1,-1), 4),
+    ]))
+    elements.append(table)
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
 def hat_recht(modul_id, aktion="sehen"):
     user = st.session_state.get("user_data", {})
     if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
@@ -53,7 +108,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Turbo-Scan, Warenkorb, Sidebar-Warnungen & Logs.")
+    st.caption("High-Speed Lager: Turbo-Scan, Warenkorb, Sidebar-Warnungen, Logs & PDF-Export.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -114,6 +169,7 @@ def render_lager_verwaltung(supabase):
                     gefilterte_liste.append(mat)
 
             anzeige_daten = []
+            pdf_roh_daten = []
             for m in gefilterte_liste:
                 soll = m.get('soll_bestand', 0)
                 ist = m.get('ist_bestand', 0)
@@ -136,10 +192,35 @@ def render_lager_verwaltung(supabase):
                     "Soll": f"{soll}"
                 })
 
+                pdf_roh_daten.append([
+                    str(m.get('artikelnummer', '-')),
+                    str(m.get('bezeichnung', '')),
+                    str(m.get('kategorie', 'Allgemein')),
+                    str(m.get('lagerort', '-')),
+                    f"{ist} {m.get('einheit', 'Stk.')}",
+                    str(soll),
+                    status
+                ])
+
             df = pd.DataFrame(anzeige_daten)
             if not df.empty:
                 st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
                 st.caption(f"Gefunden: {len(df)} Artikel")
+                
+                # PDF-Export für Materialliste
+                if PDF_EXPORT_AVAILABLE:
+                    pdf_bytes = generiere_pdf_bericht(
+                        "Lagerbestand & Materialliste",
+                        ["Code", "Bezeichnung", "Kategorie", "Lagerort", "Ist", "Soll", "Status"],
+                        pdf_roh_daten
+                    )
+                    st.download_button(
+                        label="📄 Materialliste als PDF herunterladen",
+                        data=pdf_bytes,
+                        file_name=f"Materialliste_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+                        mime="application/pdf",
+                        key="pdf_download_material"
+                    )
             else:
                 st.warning("Keine Artikel gefunden.")
 
@@ -262,7 +343,6 @@ def render_lager_verwaltung(supabase):
 
                                 supabase.table("lager_material").update({"ist_bestand": neuer_b}).eq("id", item["id"]).execute()
                                 
-                                # Ohne 'benutzer'-Spalte, alles sicher im Kommentar hinterlegt
                                 supabase.table("lager_bewegungen").insert({
                                     "material_id": item["id"],
                                     "art": "Einbuchung" if ist_zugang else "Ausbuchung",
@@ -439,6 +519,7 @@ def render_lager_verwaltung(supabase):
         elif not darf_bearbeiten:
             st.error("⛔ Keine Berechtigung.")
         else:
+            inventur_pdf_daten = []
             with st.form("inventur_form"):
                 inventur_daten = {}
                 for m in material_liste:
@@ -460,6 +541,31 @@ def render_lager_verwaltung(supabase):
                         st.rerun()
                     except Exception as e:
                         st.error(f"Fehler: {e}")
+
+            # PDF-Export für die Inventurliste
+            st.markdown("---")
+            for m in material_liste:
+                inventur_pdf_daten.append([
+                    str(m.get('artikelnummer', '-')),
+                    str(m.get('bezeichnung', '')),
+                    str(m.get('lagerort', '-')),
+                    f"{m.get('ist_bestand', 0)} {m.get('einheit', 'Stk.')}",
+                    "_______" # Platzhalter für handschriftliche Zählung beim Ausdruck
+                ])
+
+            if PDF_EXPORT_AVAILABLE:
+                inv_pdf_bytes = generiere_pdf_bericht(
+                    "Inventur-Zählliste",
+                    ["Code", "Bezeichnung", "Lagerort", "System-Bestand", "Gezahlter Ist-Bestand"],
+                    inventur_pdf_daten
+                )
+                st.download_button(
+                    label="📄 Inventurliste / Zählbogen als PDF herunterladen",
+                    data=inv_pdf_bytes,
+                    file_name=f"Inventur_Zaehlliste_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+                    mime="application/pdf",
+                    key="pdf_download_inventur"
+                )
 
     # --- TAB 7: CSV-IMPORT ---
     with tabs[6]:
@@ -504,21 +610,50 @@ def render_lager_verwaltung(supabase):
                     mat_map = {m["id"]: m for m in material_liste}
 
                     log_daten = []
+                    log_pdf_daten = []
                     for b in bewegungen:
                         mat_info = mat_map.get(b.get("material_id"), {})
                         m_val = b.get("menge", 0)
+                        art = b.get("art", "-")
+                        bez = mat_info.get("bezeichnung", "Unbekannt")
+                        code = mat_info.get("artikelnummer", "-")
+                        einheit = mat_info.get("einheit", "Stk.")
+                        kommentar = b.get("kommentar", "-")
                         
                         log_daten.append({
-                            "Art": b.get("art", "-"),
-                            "Artikel": mat_info.get("bezeichnung", "Unbekannt"),
-                            "Code": mat_info.get("artikelnummer", "-"),
+                            "Art": art,
+                            "Artikel": bez,
+                            "Code": code,
                             "Menge": m_val,
-                            "Einheit": mat_info.get("einheit", "Stk."),
-                            "Details / Kommentar": b.get("kommentar", "-")
+                            "Einheit": einheit,
+                            "Details / Kommentar": kommentar
                         })
+
+                        log_pdf_daten.append([
+                            str(art),
+                            str(bez),
+                            str(code),
+                            f"{m_val} {einheit}",
+                            str(kommentar)
+                        ])
 
                     log_df = pd.DataFrame(log_daten)
                     st.dataframe(log_df, use_container_width=True, hide_index=True)
                     st.caption(f"Letzte {len(log_df)} Buchungsvorgänge im System.")
+
+                    # PDF-Export für Entnahme-Logs
+                    if PDF_EXPORT_AVAILABLE:
+                        log_pdf_bytes = generiere_pdf_bericht(
+                            "Entnahme- und Bewegungsprotokoll (Logs)",
+                            ["Art", "Artikel", "Code", "Menge", "Details & Projekt"],
+                            log_pdf_daten
+                        )
+                        st.download_button(
+                            label="📄 Entnahme-Logs als PDF herunterladen",
+                            data=log_pdf_bytes,
+                            file_name=f"Lager_Logs_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+                            mime="application/pdf",
+                            key="pdf_download_logs"
+                        )
             except Exception as e:
                 st.error(f"Fehler beim Laden der Logs: {e}")

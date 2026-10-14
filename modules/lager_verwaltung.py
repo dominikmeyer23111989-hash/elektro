@@ -8,7 +8,7 @@ import qrcode
 import cv2
 import numpy as np
 
-# ReportLab für saubere PDF-Generierung
+# ReportLab für saubere PDF-Generierung prüfen
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -57,7 +57,6 @@ def generiere_pdf_bericht(titel, headers, daten):
     elements = []
     styles = getSampleStyleSheet()
     
-    # Titel-Styling
     title_style = ParagraphStyle(
         'ReportTitle',
         parent=styles['Heading1'],
@@ -67,7 +66,6 @@ def generiere_pdf_bericht(titel, headers, daten):
     )
     elements.append(Paragraph(titel, title_style))
     
-    # Zeitstempel
     date_style = ParagraphStyle(
         'ReportDate',
         parent=styles['Normal'],
@@ -78,7 +76,6 @@ def generiere_pdf_bericht(titel, headers, daten):
     elements.append(Paragraph(f"Erstellt am: {datetime.now().strftime('%d.%m.%Y um %H:%M Uhr')}", date_style))
     elements.append(Spacer(1, 5))
     
-    # Tabellen-Daten aufbereiten
     table_data = [headers] + daten
     table = Table(table_data, repeatRows=1)
     table.setStyle(TableStyle([
@@ -207,7 +204,6 @@ def render_lager_verwaltung(supabase):
                 st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
                 st.caption(f"Gefunden: {len(df)} Artikel")
                 
-                # PDF-Export für Materialliste
                 if PDF_EXPORT_AVAILABLE:
                     pdf_bytes = generiere_pdf_bericht(
                         "Lagerbestand & Materialliste",
@@ -221,6 +217,8 @@ def render_lager_verwaltung(supabase):
                         mime="application/pdf",
                         key="pdf_download_material"
                     )
+                else:
+                    st.info("💡 Hinweis für PDF-Export: Bitte stellen Sie sicher, dass 'reportlab' auf dem Server installiert ist (`pip install reportlab`).")
             else:
                 st.warning("Keine Artikel gefunden.")
 
@@ -514,6 +512,22 @@ def render_lager_verwaltung(supabase):
     # --- TAB 6: INVENTUR ---
     with tabs[5]:
         st.subheader("📋 Systematische Inventur")
+        
+        # Letzte Inventur aus den Bewegungen ermitteln
+        letzte_inventur_datum = "Noch nie durchgeführt"
+        try:
+            inv_check = supabase.table("lager_bewegungen").select("*").eq("art", "Inventur").order("id", desc=True).limit(1).execute()
+            if inv_check.data and len(inv_check.data) > 0:
+                k, v = inv_check.data[0], inv_check.data[0].get("kommentar", "")
+                if "am " in v:
+                    # Datum aus dem Kommentar extrahieren
+                    teil = v.split("am ")[1]
+                    letzte_inventur_datum = teil.split(" von")[0] if " von" in teil else teil[:10]
+        except Exception:
+            pass
+
+        st.info(f"📅 **Letzte Inventur durchgeführt am:** `{letzte_inventur_datum}`")
+
         if not material_liste:
             st.warning("Keine Artikel vorhanden.")
         elif not darf_bearbeiten:
@@ -535,9 +549,23 @@ def render_lager_verwaltung(supabase):
 
                 if st.form_submit_button("✅ Inventur finalisieren", type="primary", use_container_width=True):
                     try:
+                        user_data = st.session_state.get("user_data", {})
+                        current_user = user_data.get("name") or user_data.get("benutzername") or user_data.get("username") or "Admin"
+                        heute_datum = datetime.now().strftime('%d.%m.%Y')
+                        inventur_kommentar = f"Benutzer: {current_user} | Inventur durchgeführt am {heute_datum}"
+
                         for mat_id, neuer_ist in inventur_daten.items():
                             supabase.table("lager_material").update({"ist_bestand": neuer_ist}).eq("id", mat_id).execute()
-                        st.toast("Inventur erfolgreich abgeschlossen!", icon="🎯")
+                            
+                            # Bewegung für Historie & Datumseintrag protokollieren
+                            supabase.table("lager_bewegungen").insert({
+                                "material_id": mat_id,
+                                "art": "Inventur",
+                                "menge": neuer_ist,
+                                "kommentar": inventur_kommentar
+                            }).execute()
+
+                        st.toast("Inventur erfolgreich abgeschlossen & Datum aktualisiert!", icon="🎯")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Fehler: {e}")
@@ -550,12 +578,12 @@ def render_lager_verwaltung(supabase):
                     str(m.get('bezeichnung', '')),
                     str(m.get('lagerort', '-')),
                     f"{m.get('ist_bestand', 0)} {m.get('einheit', 'Stk.')}",
-                    "_______" # Platzhalter für handschriftliche Zählung beim Ausdruck
+                    "_______"
                 ])
 
             if PDF_EXPORT_AVAILABLE:
                 inv_pdf_bytes = generiere_pdf_bericht(
-                    "Inventur-Zählliste",
+                    f"Inventur-Zählliste (Letzte Inventur: {letzte_inventur_datum})",
                     ["Code", "Bezeichnung", "Lagerort", "System-Bestand", "Gezahlter Ist-Bestand"],
                     inventur_pdf_daten
                 )
@@ -641,7 +669,6 @@ def render_lager_verwaltung(supabase):
                     st.dataframe(log_df, use_container_width=True, hide_index=True)
                     st.caption(f"Letzte {len(log_df)} Buchungsvorgänge im System.")
 
-                    # PDF-Export für Entnahme-Logs
                     if PDF_EXPORT_AVAILABLE:
                         log_pdf_bytes = generiere_pdf_bericht(
                             "Entnahme- und Bewegungsprotokoll (Logs)",

@@ -50,7 +50,6 @@ def format_de_zeit(iso_string):
         return str(iso_string)[:16]
 
 def draw_signature_on_pdf(pdf, base64_str, label):
-    """Fügt eine Base64-Unterschrift sauber in das FPDF-Dokument ein."""
     if not base64_str or not base64_str.startswith('data:image'):
         return
     try:
@@ -76,7 +75,7 @@ def draw_signature_on_pdf(pdf, base64_str, label):
     except Exception as e:
         print(f"Fehler beim Rendern der Unterschrift: {e}")
 
-def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste):
+def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste, material_positionen):
     pdf = AuftragPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     pdf.set_font('Helvetica', '', 11)
@@ -138,9 +137,27 @@ def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste):
     pdf.ln(4)
 
     pdf.set_font('Helvetica', 'B', 11)
-    pdf.cell(0, 6, "Verbrauchtes / Benötigtes Material (Lager & Vor Ort):", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, "Verbrauchtes Material & Bauteile (Lager & Vor Ort):", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font('Helvetica', '', 10)
-    pdf.multi_cell(0, 5, clean_text(a.get('benoetigtes_material', 'Noch kein Material eingetragen.')))
+    
+    if material_positionen:
+        for mp in material_positionen:
+            menge = mp.get('menge', 1)
+            if mp.get('ist_fremdmaterial'):
+                bez = mp.get('freitext_bezeichnung', 'Fremdteil')
+                einheit_str = "Stk."
+            else:
+                mat_info = mp.get('lager_material') or {}
+                bez = mat_info.get('bezeichnung', 'Lagerartikel')
+                einheit_str = mat_info.get('einheit', 'Stk.')
+            pdf.cell(0, 5, clean_text(f"- {menge} {einheit_str} {bez}"), new_x="LMARGIN", new_y="NEXT")
+    else:
+        pdf.cell(0, 5, clean_text("Noch kein Material direkt zugeordnet."), new_x="LMARGIN", new_y="NEXT")
+    
+    if a.get('benoetigtes_material'):
+        pdf.ln(2)
+        pdf.multi_cell(0, 5, clean_text(f"Zusatznotizen Material: {a.get('benoetigtes_material')}"))
+
     pdf.ln(6)
 
     pdf.set_font('Helvetica', 'B', 11)
@@ -160,7 +177,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_auftraege_verwaltung(supabase):
     st.title("📋 4. Auftrags- & Einsatzmanagement")
-    st.caption("Planen Sie Aufträge, steuern Sie den Status, weisen Sie Teams & Fahrzeuge zu und verknüpfen Sie Material direkt aus dem Lager.")
+    st.caption("Planen Sie Aufträge, weisen Sie Teams & Fahrzeuge zu und buchen Sie Material direkt aus dem Lager auf den Auftrag.")
 
     if not hat_recht("4", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Auftragsmodul aufzurufen.")
@@ -173,7 +190,6 @@ def render_auftraege_verwaltung(supabase):
     
     is_admin = hat_recht("4", "erstellen") or hat_recht("4", "bearbeiten") or (user_rolle in ["Admin", "Büro", "Inhaber"])
 
-    # Daten aus Supabase laden
     try:
         a_res = supabase.table("auftraege").select("*, kunden(*), gebaeude(*), fahrzeuge(*)").order("erstellt_am", desc=True).execute()
         auftraege_liste = a_res.data or []
@@ -230,7 +246,7 @@ def render_auftraege_verwaltung(supabase):
     tabs = st.tabs(tabs_optionen)
 
     with tabs[0]:
-        st.subheader("Auftragsliste, Lager-Verknüpfung & Digitale Unterschriften")
+        st.subheader("Auftragsliste, Lager-Zuordnung & Abnahmeprotokoll")
 
         sichtbare_auftraege = []
         for a in auftraege_liste:
@@ -253,15 +269,22 @@ def render_auftraege_verwaltung(supabase):
             sichtbare_auftraege.append(a)
 
         if not sichtbare_auftraege:
-            st.info("Keine Aufträge vorhanden oder aktuell keine Freigabe für Ihr Konto (Aufträge 'In Planung' sind für Monteure unsichtbar).")
+            st.info("Keine Aufträge vorhanden oder aktuell keine Freigabe für Ihr Konto.")
         else:
-            darf_bearbeiten = hat_recht("4", "bearbeiten") or True # Monteure dürfen Material eintragen
+            darf_bearbeiten = True # Monteure dürfen am Auftrag arbeiten & Material buchen
 
             for a in sichtbare_auftraege:
                 kunde = a.get("kunden") or {}
                 gebaeude = a.get("gebaeude") or {}
                 fahrzeug = a.get("fahrzeuge") or {}
                 team = a.get("team", [])
+
+                # Verknüpftes Material zu diesem Auftrag laden
+                try:
+                    am_res = supabase.table("auftrag_material").select("*, lager_material(bezeichnung, einheit, artikelnummer)").eq("auftrag_id", a["id"]).execute()
+                    auftrag_materialien = am_res.data or []
+                except Exception:
+                    auftrag_materialien = []
 
                 status = a.get("status", "In Planung")
                 status_icons = {
@@ -275,27 +298,33 @@ def render_auftraege_verwaltung(supabase):
                 k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}".strip() or a.get("freitext_kunde") or "Spontanauftrag"
                 g_adr = f"{gebaeude.get('strasse', '')} {gebaeude.get('hausnummer', '')}, {gebaeude.get('ort', '')}" if gebaeude else a.get("freitext_ort") or "Kein Objekt"
                 team_names = ", ".join([f"{m['vorname']} {m['nachname']}" for m in team]) or "Kein Team zugewiesen"
-                
-                f_marke = fahrzeug.get('marke') or fahrzeug.get('titel') or 'Fahrzeug'
-                f_kennz = fahrzeug.get('kennzeichen') or ''
-                f_info = f"{f_marke} ({f_kennz})" if f_kennz else f_marke
 
                 with st.expander(f"{status_icon} [{a.get('auftragsnummer')}] Status: {status} | Kunde: {k_name} | Team: {team_names}"):
                     a_datum_de = format_de_datum(a.get('termin_um'))
                     st.write(f"**Auftragsdatum:** {a_datum_de}")
                     st.write(f"**Objektadresse:** {g_adr}")
                     st.write(f"**Auszuführende Arbeiten:** {a.get('arbeiten')}")
-                    if a.get('mieter_we'):
-                        st.write(f"**Mieter / WE:** {a.get('mieter_we')}")
-                
-                    t_von_de = format_de_zeit(a.get('termin_um'))
-                    t_bis_de = format_de_zeit(a.get('termin_bis'))
-                    st.write(f"**Einsatztermin:** Von {t_von_de} bis {t_bis_de}")
-                    st.write(f"**Zugewiesenes Fahrzeug:** {f_info}")
-                    st.write(f"**Bisher erfasstes Material:** {a.get('benoetigtes_material') or 'Noch nichts eingetragen'}")
+
+                    # Aktuelle Material-Liste als Tabelle anzeigen
+                    st.markdown("---")
+                    st.write("📦 **Dem Auftrag zugeordnetes Material:**")
+                    if auftrag_materialien:
+                        mat_anzeige = []
+                        for am in auftrag_materialien:
+                            if am.get('ist_fremdmaterial'):
+                                bez = f"{am.get('freitext_bezeichnung')} (Fremdteil)"
+                                einh = "Stk."
+                            else:
+                                minfo = am.get('lager_material') or {}
+                                bez = minfo.get('bezeichnung', 'Unbekannter Artikel')
+                                einh = minfo.get('einheit', 'Stk.')
+                            mat_anzeige.append({"Position / Artikel": bez, "Menge": f"{am.get('menge')} {einh}"})
+                        st.dataframe(pd.DataFrame(mat_anzeige), use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Noch kein Material für diesen Auftrag erfasst.")
 
                     st.markdown("---")
-                    st.write("🛠️ **Auftragsstatus & Material aus Lager buchen**")
+                    st.write("🛠️ **Material hinzufügen & Status bearbeiten**")
 
                     with st.form(f"auftrag_edit_{a['id']}"):
                         neuer_status = st.selectbox(
@@ -304,33 +333,28 @@ def render_auftraege_verwaltung(supabase):
                             index=["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"].index(status) if status in ["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"] else 0
                         )
 
-                        st.markdown("---")
-                        st.subheader("📦 Materialauswahl aus dem Lager (für diesen Auftrag)")
-                        
-                        # Auswahl von Lagerartikeln für diesen Auftrag
+                        st.markdown("##### ➕ Material-Position hinzufügen")
                         ausgewaehlter_lager_artikel = st.selectbox(
                             "Artikel aus Lager wählen",
                             options=[None] + lager_material_liste,
-                            format_func=lambda x: "--- Artikel wählen ---" if x is None else f"{x['bezeichnung']} (Bestand: {x['ist_bestand']} {x.get('einheit', 'Stk.')} | Ort: {x.get('lagerort', '-')})",
+                            format_func=lambda x: "--- Kein Lagerartikel wählen ---" if x is None else f"{x['bezeichnung']} (Bestand: {x['ist_bestand']} {x.get('einheit', 'Stk.')} | Ort: {x.get('lagerort', '-')})",
                             key=f"select_mat_{a['id']}"
                         )
-                        
-                        entnahme_menge = st.number_input("Entnahmemenge", min_value=1, value=1, step=1, key=f"menge_mat_{a['id']}")
-                        
-                        freitext_ergaenzung = st.text_input("Oder Zusatzartikel / Fremdmaterial (Freitext für Artikel nicht im Lager)", placeholder="z.B. Spezial-Relais aus dem Baumarkt, 1 Stk.", key=f"free_mat_{a['id']}")
+                        menge_lager = st.number_input("Menge (Lagerartikel)", min_value=1, value=1, step=1, key=f"menge_lager_{a['id']}")
 
-                        verbrauchtes_material_aktuell = st.text_area("Gesamte Material-Historie / Notizen", value=a.get("benoetigtes_material") or "", key=f"hist_mat_{a['id']}")
-                        
+                        st.markdown("Oder **Fremd- / Ad-hoc-Material** (z.B. Ersatzteil vom Baumarkt):")
+                        freitext_mat = st.text_input("Bezeichnung des Fremdteils", placeholder="z.B. Spezial-Relais Fabrikat X", key=f"free_mat_{a['id']}")
+                        menge_fremd = st.number_input("Menge (Fremdteil)", min_value=1, value=1, step=1, key=f"menge_fremd_{a['id']}")
+
                         neues_team = []
                         neues_fahrzeug = a.get("fahrzeug_id")
 
                         if is_admin:
                             st.markdown("---")
-                            st.write("👑 **Admin-Bereich: Team & Fahrzeug neu zuweisen**")
-                            
+                            st.write("👑 **Admin-Bereich: Team & Fahrzeug**")
                             aktuelle_team_ids = [m["id"] for m in team]
                             neues_team = st.multiselect(
-                                "Einsatz-Team (Monteure & Azubis wählen)",
+                                "Team zuweisen",
                                 options=[m["id"] for m in verfuegbare_mitarbeiter],
                                 format_func=lambda x: next(f"{m['vorname']} {m['nachname']}" for m in verfuegbare_mitarbeiter if m["id"] == x),
                                 default=[mid for mid in aktuelle_team_ids if mid in [m["id"] for m in verfuegbare_mitarbeiter]],
@@ -339,170 +363,119 @@ def render_auftraege_verwaltung(supabase):
 
                             fahrzeug_optionen = [None] + [f["id"] for f in fahrzeuge_liste]
                             neues_fahrzeug = st.selectbox(
-                                "Fahrzeug zuweisen (optional)",
+                                "Fahrzeug",
                                 options=fahrzeug_optionen,
-                                format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f.get('marke', f.get('titel', 'Fahrzeug'))} ({f.get('kennzeichen', '')})" for f in fahrzeuge_liste if f["id"] == x), ""),
+                                format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f.get('marke', 'Fahrzeug')} ({f.get('kennzeichen', '')})" for f in fahrzeuge_liste if f["id"] == x), ""),
                                 index=fahrzeug_optionen.index(a.get("fahrzeug_id")) if a.get("fahrzeug_id") in fahrzeug_optionen else 0,
                                 key=f"fzg_sel_{a['id']}"
                             )
 
-                        b_save = st.form_submit_button("💾 Änderungen & Lagerabbuchung speichern", type="primary", use_container_width=True)
+                        b_save = st.form_submit_button("💾 Änderungen & Material buchen", type="primary", use_container_width=True)
                         if b_save:
                             try:
-                                finaler_material_text = verbrauchtes_material_aktuell
-                                
-                                # Wenn ein Lagerartikel ausgewählt wurde, direkt dem Text hinzufügen und im Lager abbuchen
+                                # 1. Status aktualisieren
+                                update_payload = {"status": neuer_status}
+                                if is_admin:
+                                    update_payload["fahrzeug_id"] = neues_fahrzeug
+                                supabase.table("auftraege").update(update_payload).eq("id", a["id"]).execute()
+
+                                # 2. Lagerartikel hinzufügen & Bestand im Lager abziehen
                                 if ausgewaehlter_lager_artikel:
-                                    mat_bez = ausgewaehlter_lager_artikel['bezeichnung']
                                     mat_id = ausgewaehlter_lager_artikel['id']
-                                    einheit = ausgewaehlter_lager_artikel.get('einheit', 'Stk.')
-                                    alter_bestand = int(ausgewaehlter_lager_artikel.get('ist_bestand', 0))
-                                    neuer_bestand = max(0, alter_bestand - entnahme_menge)
+                                    alter_b = int(ausgewaehlter_lager_artikel.get('ist_bestand', 0))
+                                    neuer_b = max(0, alter_b - menge_lager)
 
-                                    # 1. Lagerbestand in Tabelle aktualisieren
-                                    supabase.table("lager_material").update({"ist_bestand": neuer_bestand}).eq("id", mat_id).execute()
-
-                                    # 2. Bewegungs-Log eintragen
+                                    # Lagerbestand updaten
+                                    supabase.table("lager_material").update({"ist_bestand": neuer_b}).eq("id", mat_id).execute()
+                                    
+                                    # Bewegungs-Log schreiben
                                     supabase.table("lager_bewegungen").insert({
                                         "material_id": mat_id,
                                         "art": "Ausbuchung",
-                                        "menge": entnahme_menge,
+                                        "menge": menge_lager,
                                         "kommentar": f"Auftrag {a.get('auftragsnummer')} | Monteur: {current_user_name}"
                                     }).execute()
 
-                                    # 3. Zum Materialtext des Auftrags hinzufügen
-                                    neuer_eintrag = f"{entnahme_menge} {einheit} {mat_bez}"
-                                    if finaler_material_text:
-                                        finaler_material_text += f"\n{neuer_eintrag}"
-                                    else:
-                                        finaler_material_text = neuer_eintrag
+                                    # In auftrag_material eintragen
+                                    supabase.table("auftrag_material").insert({
+                                        "auftrag_id": a["id"],
+                                        "material_id": mat_id,
+                                        "menge": menge_lager,
+                                        "ist_fremdmaterial": False
+                                    }).execute()
 
-                                # Wenn Freitext-Material eingetragen wurde
-                                if freitext_ergaenzung.strip():
-                                    if finaler_material_text:
-                                        finaler_material_text += f"\n{freitext_ergaenzung.strip()}"
-                                    else:
-                                        finaler_material_text = freitext_ergaenzung.strip()
-
-                                update_payload = {
-                                    "status": neuer_status,
-                                    "benoetigtes_material": finaler_material_text
-                                }
-                                if is_admin:
-                                    update_payload["fahrzeug_id"] = neues_fahrzeug
-
-                                supabase.table("auftraege").update(update_payload).eq("id", a["id"]).execute()
+                                # 3. Fremdmaterial eintragen (berührt das Lager nicht)
+                                if freitext_mat.strip():
+                                    supabase.table("auftrag_material").insert({
+                                        "auftrag_id": a["id"],
+                                        "menge": menge_fremd,
+                                        "ist_fremdmaterial": True,
+                                        "freitext_bezeichnung": freitext_mat.strip()
+                                    }).execute()
 
                                 if is_admin and neues_team:
                                     supabase.table("auftrag_mitarbeiter").delete().eq("auftrag_id", a["id"]).execute()
                                     team_inserts = [{"auftrag_id": a["id"], "mitarbeiter_id": m_id} for m_id in neues_team]
                                     supabase.table("auftrag_mitarbeiter").insert(team_inserts).execute()
 
-                                st.toast("Auftrag & Material erfolgreich aktualisiert und Lagerbestand angepasst!", icon="🎯")
+                                st.toast("Erfolgreich gespeichert und Lagerbestand angepasst!", icon="🎯")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Fehler beim Speichern: {e}")
 
-                    # --- DIGITALE UNTERSCHRIFTEN ---
+                    # --- UNTERSCHRIFTEN & PDF ---
                     st.markdown("---")
                     st.write("✍️ **Digitale Unterschriften (Abnahmeprotokoll)**")
-                    
                     col_sig1, col_sig2 = st.columns(2)
                     
-                    # 1. KUNDEN-UNTERSCHRIFT
                     with col_sig1:
-                        st.markdown("Unterschrift Kunde / Auftraggeber")
+                        st.markdown("Unterschrift Kunde")
                         db_kunde_sig = a.get("kunde_unterschrift")
-                        
                         if db_kunde_sig and db_kunde_sig.startswith("data:image"):
-                            st.success("✅ Kunde hat bereits unterschrieben!")
+                            st.success("✅ Unterschrieben!")
                             st.image(db_kunde_sig, width=250)
-                            if st.button("🔄 Kunden-Unterschrift neu machen", key=f"btn_reset_kunde_{a['id']}"):
+                            if st.button("🔄 Neu machen", key=f"reset_k_{a['id']}"):
                                 supabase.table("auftraege").update({"kunde_unterschrift": None}).eq("id", a["id"]).execute()
-                                st.toast("Kunden-Unterschrift zurückgesetzt.", icon="ℹ️")
                                 st.rerun()
                         else:
-                            canvas_kunde = st_canvas(
-                                fill_color="rgba(255, 165, 0, 0.3)",
-                                stroke_width=2,
-                                stroke_color="#000000",
-                                background_color="#FFFFFF",
-                                height=100,
-                                width=300,
-                                drawing_mode="freedraw",
-                                return_image_data=True,
-                                key=f"canvas_kunde_{a['id']}"
-                            )
-                            if st.button("💾 Kunde Unterschrift speichern", key=f"btn_save_kunde_{a['id']}"):
+                            canvas_kunde = st_canvas(fill_color="rgba(255,165,0,0.3)", stroke_width=2, stroke_color="#000", background_color="#FFF", height=100, width=300, drawing_mode="freedraw", return_image_data=True, key=f"can_k_{a['id']}")
+                            if st.button("💾 Kunde speichern", key=f"save_k_{a['id']}"):
                                 if canvas_kunde.json_data is not None and len(canvas_kunde.json_data.get("objects", [])) > 0:
-                                    try:
-                                        img = Image.fromarray(canvas_kunde.image_data.astype('uint8'), 'RGBA')
-                                        rgb_img = Image.new("RGB", img.size, (255, 255, 255))
-                                        rgb_img.paste(img, mask=img.split()[3])
-                                        buffered = BytesIO()
-                                        rgb_img.save(buffered, format="PNG")
-                                        sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
-                                        
-                                        supabase.table("auftraege").update({"kunde_unterschrift": sig_base64}).eq("id", a["id"]).execute()
-                                        st.toast("✅ Kundenunterschrift erfolgreich gespeichert!", icon="🎉")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"❌ Fehler beim Speichern: {e}")
-                                else:
-                                    st.warning("⚠️ Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
+                                    img = Image.fromarray(canvas_kunde.image_data.astype('uint8'), 'RGBA')
+                                    rgb = Image.new("RGB", img.size, (255, 255, 255))
+                                    rgb.paste(img, mask=img.split()[3])
+                                    buf = BytesIO()
+                                    rgb.save(buf, format="PNG")
+                                    sig_b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+                                    supabase.table("auftraege").update({"kunde_unterschrift": sig_b64}).eq("id", a["id"]).execute()
+                                    st.rerun()
 
-                    # 2. MONTEUR-UNTERSCHRIFT
                     with col_sig2:
-                        st.markdown("Unterschrift Monteur / Team")
+                        st.markdown("Unterschrift Monteur")
                         db_ma_sig = a.get("mitarbeiter_unterschrift")
-                        
                         if db_ma_sig and db_ma_sig.startswith("data:image"):
-                            st.success("✅ Monteur hat bereits unterschrieben!")
+                            st.success("✅ Unterschrieben!")
                             st.image(db_ma_sig, width=250)
-                            if st.button("🔄 Monteur-Unterschrift neu machen", key=f"btn_reset_ma_{a['id']}"):
+                            if st.button("🔄 Neu machen", key=f"reset_m_{a['id']}"):
                                 supabase.table("auftraege").update({"mitarbeiter_unterschrift": None}).eq("id", a["id"]).execute()
-                                st.toast("Monteur-Unterschrift zurückgesetzt.", icon="ℹ️")
                                 st.rerun()
                         else:
-                            canvas_ma = st_canvas(
-                                fill_color="rgba(255, 165, 0, 0.3)",
-                                stroke_width=2,
-                                stroke_color="#000000",
-                                background_color="#FFFFFF",
-                                height=100,
-                                width=300,
-                                drawing_mode="freedraw",
-                                return_image_data=True,
-                                key=f"canvas_ma_{a['id']}"
-                            )
-                            if st.button("💾 Monteur Unterschrift speichern", key=f"btn_save_ma_{a['id']}"):
+                            canvas_ma = st_canvas(fill_color="rgba(255,165,0,0.3)", stroke_width=2, stroke_color="#000", background_color="#FFF", height=100, width=300, drawing_mode="freedraw", return_image_data=True, key=f"can_m_{a['id']}")
+                            if st.button("💾 Monteur speichern", key=f"save_m_{a['id']}"):
                                 if canvas_ma.json_data is not None and len(canvas_ma.json_data.get("objects", [])) > 0:
-                                    try:
-                                        img = Image.fromarray(canvas_ma.image_data.astype('uint8'), 'RGBA')
-                                        rgb_img = Image.new("RGB", img.size, (255, 255, 255))
-                                        rgb_img.paste(img, mask=img.split()[3])
-                                        buffered = BytesIO()
-                                        rgb_img.save(buffered, format="PNG")
-                                        sig_base64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
-                                        
-                                        supabase.table("auftraege").update({"mitarbeiter_unterschrift": sig_base64}).eq("id", a["id"]).execute()
-                                        st.toast("✅ Monteurunterschrift erfolgreich gespeichert!", icon="🎉")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"❌ Fehler beim Speichern: {e}")
-                                else:
-                                    st.warning("⚠️ Bitte zuerst im Feld unterschreiben, bevor Sie speichern!")
+                                    img = Image.fromarray(canvas_ma.image_data.astype('uint8'), 'RGBA')
+                                    rgb = Image.new("RGB", img.size, (255, 255, 255))
+                                    rgb.paste(img, mask=img.split()[3])
+                                    buf = BytesIO()
+                                    rgb.save(buf, format="PNG")
+                                    sig_b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+                                    supabase.table("auftraege").update({"mitarbeiter_unterschrift": sig_b64}).eq("id", a["id"]).execute()
+                                    st.rerun()
 
                     st.markdown("---")
-                    try:
-                        fresh_res = supabase.table("auftraege").select("*").eq("id", a["id"]).execute()
-                        current_a = fresh_res.data[0] if fresh_res.data else a
-                    except Exception:
-                        current_a = a
-
-                    pdf_bytes = generate_auftrag_pdf(current_a, kunde, gebaeude, fahrzeug, team)
+                    pdf_bytes = generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team, auftrag_materialien)
                     st.download_button(
-                        label=f"📥 Abnahmeprotokoll-PDF mit Unterschriften herunterladen ({a.get('auftragsnummer')})",
+                        label=f"📥 Abnahmeprotokoll-PDF mit Materialliste herunterladen ({a.get('auftragsnummer')})",
                         data=bytes(pdf_bytes),
                         file_name=f"Abnahmeprotokoll_{a.get('auftragsnummer')}.pdf",
                         mime="application/pdf",
@@ -520,29 +493,27 @@ def render_auftraege_verwaltung(supabase):
                     
                     kunden_optionen = [None] + [k["id"] for k in kunden_liste]
                     n_kunde = st.selectbox(
-                        "Auftraggeber (Kunde aus Modul wählen)",
+                        "Auftraggeber (Kunde)",
                         options=kunden_optionen,
-                        format_func=lambda x: "--- Anderer / Spontankunde (Freitext unten) ---" if x is None else next((f"{k['nachname']}, {k['vorname']} ({k.get('firma', 'Privat')})" for k in kunden_liste if k["id"] == x), "")
+                        format_func=lambda x: "--- Spontankunde (Freitext unten) ---" if x is None else next((f"{k['nachname']}, {k['vorname']} ({k.get('firma', 'Privat')})" for k in kunden_liste if k["id"] == x), "")
                     )
-                    n_freitext_kunde = st.text_input("Oder Spontankunde / Name & Telefon (Freitext)", placeholder="z.B. Herr Müller, Tel: 0171-1234567")
+                    n_freitext_kunde = st.text_input("Oder Spontankunde / Name & Telefon", placeholder="z.B. Herr Müller, Tel: 0171-1234567")
 
                     gebaeude_optionen = [None] + [g["id"] for g in gebaeude_liste]
                     n_gebaeude = st.selectbox(
-                        "Auftragsort (Gebäude / Objekt wählen)",
+                        "Auftragsort (Gebäude)",
                         options=gebaeude_optionen,
-                        format_func=lambda x: "--- Alternative Anschrift (Freitext unten) ---" if x is None else next((f"[{g.get('gebaeude_code', 'Kein Code')}] {g['strasse']} {g['hausnummer']}, {g['ort']}" for g in gebaeude_liste if g["id"] == x), "")
+                        format_func=lambda x: "--- Alternative Anschrift (Freitext unten) ---" if x is None else next((f"[{g.get('gebaeude_code', 'Code')}] {g['strasse']} {g['hausnummer']}, {g['ort']}" for g in gebaeude_liste if g["id"] == x), "")
                     )
-                    n_freitext_ort = st.text_input("Oder alternativer Auftragsort (Freitext)", placeholder="z.B. Bahnhofstraße 10, 44787 Bochum")
+                    n_freitext_ort = st.text_input("Oder alternativer Auftragsort", placeholder="z.B. Bahnhofstraße 10, Bochum")
 
-                    n_mieter_we = st.text_input("Mieter / WE / Etage (optional)", placeholder="z.B. WE 4, 2. Obergeschoss links")
-                    
+                    n_mieter_we = st.text_input("Mieter / WE / Etage (optional)", placeholder="z.B. WE 4, 2. Obergeschoss")
                     n_status = st.selectbox("Initialer Status", ["In Planung", "Offener Auftrag", "In Bearbeitung", "Erledigt"], index=0)
-                    st.caption("ℹ️ Hinweis: Aufträge im Status 'In Planung' sind für Monteure unsichtbar.")
 
                 with col2:
                     if verfuegbare_mitarbeiter:
                         n_team = st.multiselect(
-                            "Einsatz-Team (Monteure & Azubis wählen) *",
+                            "Einsatz-Team *",
                             options=[m["id"] for m in verfuegbare_mitarbeiter],
                             format_func=lambda x: next(f"{m['vorname']} {m['nachname']}" for m in verfuegbare_mitarbeiter if m["id"] == x)
                         )
@@ -552,27 +523,27 @@ def render_auftraege_verwaltung(supabase):
 
                     fahrzeug_optionen = [None] + [f["id"] for f in fahrzeuge_liste]
                     n_fahrzeug = st.selectbox(
-                        "Fahrzeug zuweisen (optional)",
+                        "Fahrzeug zuweisen",
                         options=fahrzeug_optionen,
-                        format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f.get('marke', f.get('titel', 'Fahrzeug'))} ({f.get('kennzeichen', '')})" for f in fahrzeuge_liste if f["id"] == x), "")
+                        format_func=lambda x: "--- Kein Fahrzeug ---" if x is None else next((f"{f.get('marke', 'Fahrzeug')} ({f.get('kennzeichen', '')})" for f in fahrzeuge_liste if f["id"] == x), "")
                     )
                     
-                    st.write("Termindaten & Auftragsdatum")
+                    st.write("Termindaten")
                     col_d1, col_d2 = st.columns(2)
                     with col_d1:
-                        n_datum = st.date_input("Auftragsdatum (TT.MM.JJJJ)", value=datetime.today(), format="DD.MM.YYYY")
+                        n_datum = st.date_input("Auftragsdatum", value=datetime.today(), format="DD.MM.YYYY")
                     with col_d2:
                         n_uhr_von = st.time_input("Uhrzeit Von", value=datetime.strptime("08:00", "%H:%M").time())
                         n_uhr_bis = st.time_input("Uhrzeit Bis", value=datetime.strptime("16:00", "%H:%M").time())
 
-                n_arbeiten = st.text_area("Auszuführende Arbeiten *", placeholder="z.B. Zählerschrank umbauen, Notdienst Störung Beseitigung...")
-                n_material = st.text_area("Benötigtes Material (Vorbereitung / Soll-Liste)", placeholder="z.B. 1x FI-Schalter, 15m NYM-J 3x1.5...")
+                n_arbeiten = st.text_area("Auszuführende Arbeiten *", placeholder="z.B. Zählerschrank umbauen, Störung beseitigen...")
+                n_material = st.text_area("Zusatznotizen zum Material (optional)", placeholder="z.B. Besonderheiten bei Bauteilen...")
 
                 if st.form_submit_button("Auftrag anlegen & zuweisen", type="primary", use_container_width=True):
                     if not n_auftragsnummer or not n_arbeiten:
-                        st.warning("Bitte Auftragsnummer und auszuführende Arbeiten angeben.")
+                        st.warning("Bitte Auftragsnummer und Arbeiten angeben.")
                     elif not n_team:
-                        st.warning("Bitte wählen Sie mindestens einen Mitarbeiter für das Team aus.")
+                        st.warning("Bitte wählen Sie mindestens einen Mitarbeiter aus.")
                     else:
                         try:
                             dt_von = datetime.combine(n_datum, n_uhr_von).astimezone(ZoneInfo("Europe/Berlin")).isoformat()

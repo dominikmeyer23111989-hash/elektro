@@ -8,12 +8,42 @@ import qrcode
 import cv2
 import numpy as np
 
-# OpenCV QR-Detector initialisieren
+# Robustere QR-Erkennung mit OpenCV
 try:
     qr_detector = cv2.QRCodeDetector()
     QR_SCAN_AVAILABLE = True
 except Exception:
     QR_SCAN_AVAILABLE = False
+
+def decodiere_qr_aus_bild(opencv_image):
+    if not QR_SCAN_AVAILABLE or opencv_image is None:
+        return ""
+    try:
+        # 1. Zu Graustufen konvertieren
+        gray = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2GRAY)
+        
+        # Direktversuch
+        data, _, _ = qr_detector.detectAndDecode(gray)
+        if data:
+            return str(data).strip()
+
+        # 2. Kontrastverstärkung (gegen schlechtes Licht / Schatten)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+        data, _, _ = qr_detector.detectAndDecode(enhanced)
+        if data:
+            return str(data).strip()
+
+        # 3. Skalierungstest (falls zu nah oder zu weit weg)
+        for scale in [0.5, 1.5, 2.0]:
+            resized = cv2.resize(gray, (0, 0), fx=scale, fy=scale)
+            data, _, _ = qr_detector.detectAndDecode(resized)
+            if data:
+                return str(data).strip()
+                
+    except Exception:
+        pass
+    return ""
 
 def hat_recht(modul_id, aktion="sehen"):
     user = st.session_state.get("user_data", {})
@@ -24,7 +54,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Nativer Kamera-Scan, Multibuchung, Etiketten & rollenbasierte Logs.")
+    st.caption("High-Speed Lager: Robustes Turbo-Scannen, Multibuchung, Etiketten & rollenbasierte Logs.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -101,7 +131,7 @@ def render_lager_verwaltung(supabase):
     # --- TAB 2: TURBO-SCAN & MULTIBUCHUNG ---
     with tabs[1]:
         st.subheader("⚡ Turbo-Scan & Multibuchung")
-        st.caption("Klicken Sie auf 'Foto aufnehmen', halten Sie die Kamera auf den QR-Code – der Artikel wird sofort automatisch erkannt!")
+        st.caption("Machen Sie ein Foto vom QR-Code – dank integrierter Bildoptimierung wird der Code blitzschnell erkannt!")
 
         if not material_liste:
             st.warning("Noch keine Artikel im Lager vorhanden.")
@@ -112,31 +142,28 @@ def render_lager_verwaltung(supabase):
 
             erfasster_code = ""
 
-            # Nativer Kamera-Input (funktioniert auf Smartphones reibungslos)
+            # Nativer Kamera-Input mit optimierter Erkennung
             foto_input = st.camera_input("📷 QR-Code fotografieren", key="lager_camera_input")
 
             if foto_input and QR_SCAN_AVAILABLE:
                 try:
                     file_bytes = np.asarray(bytearray(foto_input.read()), dtype=np.uint8)
                     opencv_image = cv2.imdecode(file_bytes, 1)
-
-                    # QR-Code Erkennung
-                    retval, decoded_info, points, straight_qrcode = qr_detector.detectAndDecodeMulti(opencv_image)
-                    if retval and decoded_info and decoded_info[0]:
-                        erfasster_code = str(decoded_info[0]).strip()
+                    erfasster_code = decodiere_qr_aus_bild(opencv_image)
+                    
+                    if erfasster_code:
+                        st.success(f"🎯 **Erfolgreich erkannt! Code:** `{erfasster_code}`")
                     else:
-                        data, bbox, _ = qr_detector.detectAndDecode(opencv_image)
-                        if data:
-                            erfasster_code = str(data).strip()
+                        st.warning("⚠️ QR-Code auf dem Foto nicht eindeutig erkannt. Bitte achten Sie auf gutes Licht oder nutzen Sie die Artikelsuche unten.")
                 except Exception as e:
                     st.error(f"Fehler bei der Bildverarbeitung: {e}")
 
-            # Manuelle Alternative / Eingabefeld
+            # Eingabefeld (wählt automatisch den erfassten Code oder manuelle Eingabe)
             col_s1, col_s2 = st.columns([2, 1])
             with col_s1:
-                eingabe_code = st.text_input("🔍 Artikelnummer / Code", value=erfasster_code, placeholder="Code wird automatisch eingetragen oder eingetippt...", key="multiscan_input")
+                eingabe_code = st.text_input("🔍 Artikelnummer / Code", value=erfasster_code, placeholder="Wird automatisch gefüllt...", key="multiscan_input")
             with col_s2:
-                st.write("") # Platzhalter
+                st.write("")
 
             aktueller_treffer = None
             if eingabe_code:
@@ -196,7 +223,7 @@ def render_lager_verwaltung(supabase):
             st.subheader("🛒 Aktuelle Scan-Liste (Warenkorb)")
 
             if not st.session_state["multibuchung_liste"]:
-                st.info("Der Warenkorb ist leer. Scannen Sie Artikel mit der Kamera.")
+                st.info("Der Warenkorb ist leer. Machen Sie ein Foto vom QR-Code, um Artikel hinzuzufügen.")
             else:
                 cart_df = pd.DataFrame(st.session_state["multibuchung_liste"])
                 st.dataframe(cart_df[["bezeichnung", "code", "lagerort", "art", "menge", "einheit"]], use_container_width=True, hide_index=True)
@@ -207,7 +234,6 @@ def render_lager_verwaltung(supabase):
                 with col_c1:
                     if st.button("🚀 Alle Positionen jetzt gesammelt buchen", type="primary", use_container_width=True):
                         try:
-                            # Benutzer sauber aus Session ermitteln
                             user_data = st.session_state.get("user_data", {})
                             current_user = user_data.get("name") or user_data.get("benutzername") or user_data.get("username") or "Mitarbeiter"
                             

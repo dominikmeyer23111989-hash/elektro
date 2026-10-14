@@ -139,6 +139,12 @@ def render_lager_verwaltung(supabase):
     if "last_foto_id" not in st.session_state:
         st.session_state["last_foto_id"] = None
 
+    # Inventur-Zustand im Session State initialisieren
+    if "inventur_werte" not in st.session_state:
+        st.session_state["inventur_werte"] = {}
+    if "inventur_gezahlt_ids" not in st.session_state:
+        st.session_state["inventur_gezahlt_ids"] = set()
+
     tabs = st.tabs([
         "📊 Bestandsübersicht", 
         "⚡ Turbo-Scan & Multibuchung", 
@@ -451,8 +457,7 @@ def render_lager_verwaltung(supabase):
                                 "einheit": n_einheit,
                                 "lagerort": n_lagerort,
                                 "soll_bestand": n_soll,
-                                "ist_bestand": n_ist,
-                                "gezählter_wert": None
+                                "ist_bestand": n_ist
                             }).execute()
                             st.toast(f"✅ Artikel '{n_bezeichnung}' angelegt!", icon="🎉")
                             st.rerun()
@@ -518,10 +523,10 @@ def render_lager_verwaltung(supabase):
                     else:
                         st.error("Keine Berechtigung.")
 
-    # --- TAB 6: INVENTUR (Live-DB-Zwischenspeicherung & Häkchen) ---
+    # --- TAB 6: INVENTUR (Session-Zwischenspeicherung & Häkchen) ---
     with tabs[5]:
         st.subheader("📋 Systematische Inventur (Live-Zwischengespeichert)")
-        st.caption("Ihre Eingaben werden automatisch in der Datenbank gespeichert. Artikel mit einem grünen Häkchen ✅ wurden bereits gezählt.")
+        st.caption("Ihre Eingaben werden automatisch im Arbeitsspeicher gehalten. Artikel mit einem grünen Häkchen ✅ wurden bereits bearbeitet/gezählt.")
         
         letzte_inventur_datum = "Noch nie durchgeführt"
         try:
@@ -537,7 +542,7 @@ def render_lager_verwaltung(supabase):
         st.info(f"📅 **Letzte Inventur durchgeführt am:** `{letzte_inventur_datum}`")
 
         if not material_liste:
-            st.warning("Keine Artikel vorhanden.")
+            st.warning("Noch keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Keine Berechtigung.")
         else:
@@ -555,36 +560,37 @@ def render_lager_verwaltung(supabase):
 
             inventur_daten = {}
             for m in material_liste:
+                m_id = m['id']
+                system_ist = int(m.get('ist_bestand', 0))
+
+                # Standardwert im Session State initialisieren
+                if m_id not in st.session_state["inventur_werte"]:
+                    st.session_state["inventur_werte"][m_id] = system_ist
+
                 col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
                 with col1:
-                    hat_gezahlt = m.get('gezählter_wert') is not None
+                    hat_gezahlt = m_id in st.session_state["inventur_gezahlt_ids"]
                     status_icon = " ✅" if hat_gezahlt else ""
                     st.markdown(f"**{m.get('bezeichnung')}**{status_icon}<br>📍 `{m.get('lagerort', 'Kein Ort')}`", unsafe_allow_html=True)
                 with col2:
-                    st.markdown(f"**{m.get('ist_bestand', 0)}** {m.get('einheit', 'Stk.')}")
+                    st.markdown(f"**{system_ist}** {m.get('einheit', 'Stk.')}")
                 with col3:
                     st.markdown(f"{m.get('soll_bestand', 0)} {m.get('einheit', 'Stk.')}")
                 with col4:
-                    aktueller_wert = m.get('gezählter_wert')
-                    if aktueller_wert is None:
-                        aktueller_wert = int(m.get('ist_bestand', 0))
-                    
-                    key_str = f"inv_db_val_{m['id']}"
+                    alt_wert = st.session_state["inventur_werte"][m_id]
                     gezahlt = st.number_input(
                         "Ist", 
                         min_value=0, 
-                        value=int(aktueller_wert), 
-                        key=key_str, 
+                        value=int(alt_wert), 
+                        key=f"inv_input_{m_id}", 
                         label_visibility="collapsed"
                     )
                     
-                    if gezahlt != m.get('gezählter_wert'):
-                        try:
-                            supabase.table("lager_material").update({"gezählter_wert": gezahlt}).eq("id", m['id']).execute()
-                        except Exception:
-                            pass
+                    if gezahlt != alt_wert:
+                        st.session_state["inventur_werte"][m_id] = gezahlt
+                        st.session_state["inventur_gezahlt_ids"].add(m_id)
 
-                    inventur_daten[m['id']] = gezahlt
+                    inventur_daten[m_id] = gezahlt
                 st.divider()
 
             col_fin1, col_fin2 = st.columns(2)
@@ -598,8 +604,7 @@ def render_lager_verwaltung(supabase):
 
                         for mat_id, neuer_ist in inventur_daten.items():
                             supabase.table("lager_material").update({
-                                "ist_bestand": neuer_ist,
-                                "gezählter_wert": None
+                                "ist_bestand": neuer_ist
                             }).eq("id", mat_id).execute()
                             
                             supabase.table("lager_bewegungen").insert({
@@ -609,6 +614,10 @@ def render_lager_verwaltung(supabase):
                                 "kommentar": inventur_kommentar
                             }).execute()
 
+                        # Session State nach erfolgreicher Buchung zurücksetzen
+                        st.session_state["inventur_werte"] = {}
+                        st.session_state["inventur_gezahlt_ids"] = set()
+
                         st.toast("Inventur erfolgreich abgeschlossen & Bestände aktualisiert!", icon="🎯")
                         st.rerun()
                     except Exception as e:
@@ -616,21 +625,17 @@ def render_lager_verwaltung(supabase):
 
             with col_fin2:
                 if st.button("🗑️ Zwischenstand zurücksetzen", use_container_width=True):
-                    try:
-                        for m in material_liste:
-                            supabase.table("lager_material").update({"gezählter_wert": None}).eq("id", m['id']).execute()
-                        st.toast("Alle Zähl-Zwischenstände zurückgesetzt.", icon="🔄")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Fehler: {e}")
+                    st.session_state["inventur_werte"] = {}
+                    st.session_state["inventur_gezahlt_ids"] = set()
+                    st.toast("Alle Zähl-Zwischenstände zurückgesetzt.", icon="🔄")
+                    st.rerun()
 
             # PDF-Export für die Inventurliste
             st.markdown("---")
             inventur_pdf_daten = []
             for m in material_liste:
-                gezahlt_wert = m.get('gezählter_wert')
-                if gezahlt_wert is None:
-                    gezahlt_wert = m.get('ist_bestand', 0)
+                m_id = m['id']
+                gezahlt_wert = st.session_state["inventur_werte"].get(m_id, m.get('ist_bestand', 0))
                 
                 inventur_pdf_daten.append([
                     str(m.get('artikelnummer', '-')),
@@ -686,7 +691,6 @@ def render_lager_verwaltung(supabase):
                             "einheit": str(row.get('einheit', 'Stk.')),
                             "soll_bestand": int(row.get('soll_bestand', 5)),
                             "ist_bestand": int(row.get('ist_bestand', 0)),
-                            "gezählter_wert": None,
                             "lagerort": str(row.get('lagerort', 'Hauptlager'))
                         }).execute()
                     st.toast("Erfolgreich importiert!", icon="🎉")

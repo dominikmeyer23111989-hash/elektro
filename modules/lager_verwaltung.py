@@ -53,7 +53,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Turbo-Scan mit Direkt-Warenkorb, Mengenauswahl & Logs.")
+    st.caption("High-Speed Lager: Turbo-Scan, Warenkorb mit Einzel-Löschung & rollenbasierte Logs.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -161,11 +161,9 @@ def render_lager_verwaltung(supabase):
                             code_erfasst = decodiere_qr_aus_bild(opencv_image)
                             
                             if code_erfasst:
-                                # Direkt in der Materialliste suchen
                                 gefundener_artikel = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(code_erfasst).strip().lower()), None)
                                 
                                 if gefundener_artikel:
-                                    # Automatisch in den Warenkorb legen
                                     st.session_state["multibuchung_liste"].append({
                                         "id": gefundener_artikel['id'],
                                         "bezeichnung": gefundener_artikel['bezeichnung'],
@@ -211,16 +209,28 @@ def render_lager_verwaltung(supabase):
                         st.toast(f"✅ {manuelle_menge}x {manueller_treffer['bezeichnung']} hinzugefügt!", icon="🛒")
                         st.rerun()
 
-            # Warenkorb & Gesamtabschluss
+            # Warenkorb & Gesamtabschluss mit Einzel-Löschung
             st.markdown("---")
             st.subheader("🛒 Aktuelle Scan-Liste (Warenkorb)")
 
             if not st.session_state["multibuchung_liste"]:
                 st.info("Der Warenkorb ist leer. Scannen Sie QR-Codes mit der Kamera.")
             else:
-                cart_df = pd.DataFrame(st.session_state["multibuchung_liste"])
-                st.dataframe(cart_df[["bezeichnung", "code", "lagerort", "art", "menge", "einheit"]], use_container_width=True, hide_index=True)
+                # Interaktive Anzeige der Warenkorb-Positionen mit einzelnem Lösch-Button
+                for idx, item in enumerate(st.session_state["multibuchung_liste"]):
+                    c_row1, c_row2, c_row3, c_row4 = st.columns([3, 2, 2, 1])
+                    with c_row1:
+                        st.write(f"**{item['bezeichnung']}** `({item['code']})`")
+                    with c_row2:
+                        st.write(f"{item['menge']} {item['einheit']} ({item['art']})")
+                    with c_row3:
+                        st.write(f"📍 {item['lagerort']}")
+                    with c_row4:
+                        if st.button("❌", key=f"del_cart_{idx}", help="Diese Position entfernen"):
+                            st.session_state["multibuchung_liste"].pop(idx)
+                            st.rerun()
 
+                st.markdown("---")
                 kommentar_gesamt = st.text_input("Projekt / Baustelle (optional)", placeholder="z.B. BV Bahnhofstraße (leer lassen, wenn kein Auftrag)", key="kommentar_multibuchung")
 
                 col_c1, col_c2 = st.columns(2)
@@ -244,7 +254,6 @@ def render_lager_verwaltung(supabase):
                                     "material_id": item["id"],
                                     "art": "Einbuchung" if ist_zugang else "Ausbuchung",
                                     "menge": menge_b,
-                                    "anzahl": menge_b,
                                     "benutzer": current_user,
                                     "kommentar": projekt_text
                                 }).execute()
@@ -257,7 +266,7 @@ def render_lager_verwaltung(supabase):
                             st.error(f"Fehler beim Buchen: {e}")
 
                 with col_c2:
-                    if st.button("🗑️ Warenkorb leeren", use_container_width=True):
+                    if st.button("🗑️ Warenkorb komplett leeren", use_container_width=True):
                         st.session_state["multibuchung_liste"] = []
                         st.session_state["last_foto_id"] = None
                         st.rerun()
@@ -485,7 +494,7 @@ def render_lager_verwaltung(supabase):
                     log_daten = []
                     for b in bewegungen:
                         mat_info = mat_map.get(b.get("material_id"), {})
-                        m_val = b.get("menge") if b.get("menge") is not None else b.get("anzahl", 0)
+                        m_val = b.get("menge", 0)
                         
                         log_daten.append({
                             "Art": b.get("art", "-"),

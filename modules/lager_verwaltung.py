@@ -5,7 +5,15 @@ from io import BytesIO
 import barcode
 from barcode.writer import ImageWriter
 import qrcode
-import streamlit.components.v1 as components
+import cv2
+import numpy as np
+
+# OpenCV QR-Detector initialisieren
+try:
+    qr_detector = cv2.QRCodeDetector()
+    QR_SCAN_AVAILABLE = True
+except Exception:
+    QR_SCAN_AVAILABLE = False
 
 def hat_recht(modul_id, aktion="sehen"):
     user = st.session_state.get("user_data", {})
@@ -16,7 +24,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Instant Auto-Scan, Multibuchung, Etiketten & rollenbasierte Logs.")
+    st.caption("High-Speed Lager: Nativer Kamera-Scan, Multibuchung, Etiketten & rollenbasierte Logs.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -24,14 +32,6 @@ def render_lager_verwaltung(supabase):
 
     darf_bearbeiten = hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
     darf_loeschen = hat_recht("2", "loeschen") or hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
-
-    # Prüfen, ob ein Auto-Scan über den URL-Parameter übergeben wurde
-    query_params = st.query_params
-    auto_scanned = query_params.get("scanned_code")
-    if auto_scanned:
-        st.session_state["auto_scanned_code"] = str(auto_scanned).strip()
-        st.query_params.clear()
-        st.rerun()
 
     try:
         m_res = supabase.table("lager_material").select("*").order("bezeichnung").execute()
@@ -100,48 +100,43 @@ def render_lager_verwaltung(supabase):
 
     # --- TAB 2: TURBO-SCAN & MULTIBUCHUNG ---
     with tabs[1]:
-        st.subheader("⚡ Turbo-Scan (Live-Kamera ohne Klicks)")
-        st.caption("Halten Sie die Handykamera auf den QR-Code – der Artikel wird in Millisekunden automatisch erfasst!")
+        st.subheader("⚡ Turbo-Scan & Multibuchung")
+        st.caption("Klicken Sie auf 'Foto aufnehmen', halten Sie die Kamera auf den QR-Code – der Artikel wird sofort automatisch erkannt!")
 
         if not material_liste:
             st.warning("Noch keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            scanner_html = """
-            <div style="background-color: #f0f2f6; padding: 12px; border-radius: 10px; text-align: center; font-family: sans-serif;">
-                <p style="margin: 0 0 8px 0; font-size: 15px; font-weight: bold; color: #31333F;">📷 Live-Scanner (Sofort-Erkennung)</p>
-                <div id="reader" style="width: 100%; max-width: 320px; margin: auto; border-radius: 8px; overflow: hidden;"></div>
-            </div>
-            <script src="https://unpkg.com/html5-qrcode"></script>
-            <script>
-                let scanningActive = true;
-                function onScanSuccess(decodedText, decodedResult) {
-                    if (scanningActive) {
-                        scanningActive = false;
-                        window.location.href = window.location.pathname + "?scanned_code=" + encodeURIComponent(decodedText);
-                    }
-                }
-                
-                let html5QrCode = new Html5Qrcode("reader");
-                html5QrCode.start(
-                    { facingMode: "environment" }, 
-                    { fps: 15, qrbox: { width: 220, height: 220 } },
-                    onScanSuccess,
-                    (errorMessage) => {}
-                ).catch(err => {
-                    console.error("Kamera konnte nicht gestartet werden", err);
-                });
-            </script>
-            """
-            components.html(scanner_html, height=360)
+            buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"], key="buchungs_art_one_tap")
 
+            erfasster_code = ""
+
+            # Nativer Kamera-Input (funktioniert auf Smartphones reibungslos)
+            foto_input = st.camera_input("📷 QR-Code fotografieren", key="lager_camera_input")
+
+            if foto_input and QR_SCAN_AVAILABLE:
+                try:
+                    file_bytes = np.asarray(bytearray(foto_input.read()), dtype=np.uint8)
+                    opencv_image = cv2.imdecode(file_bytes, 1)
+
+                    # QR-Code Erkennung
+                    retval, decoded_info, points, straight_qrcode = qr_detector.detectAndDecodeMulti(opencv_image)
+                    if retval and decoded_info and decoded_info[0]:
+                        erfasster_code = str(decoded_info[0]).strip()
+                    else:
+                        data, bbox, _ = qr_detector.detectAndDecode(opencv_image)
+                        if data:
+                            erfasster_code = str(data).strip()
+                except Exception as e:
+                    st.error(f"Fehler bei der Bildverarbeitung: {e}")
+
+            # Manuelle Alternative / Eingabefeld
             col_s1, col_s2 = st.columns([2, 1])
             with col_s1:
-                standard_code = st.session_state.pop("auto_scanned_code", "")
-                eingabe_code = st.text_input("🔍 Code scannen oder manuell eingeben", value=standard_code, placeholder="Code wird hier automatisch eingetragen...", key="multiscan_input")
+                eingabe_code = st.text_input("🔍 Artikelnummer / Code", value=erfasster_code, placeholder="Code wird automatisch eingetragen oder eingetippt...", key="multiscan_input")
             with col_s2:
-                buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"])
+                st.write("") # Platzhalter
 
             aktueller_treffer = None
             if eingabe_code:
@@ -201,18 +196,23 @@ def render_lager_verwaltung(supabase):
             st.subheader("🛒 Aktuelle Scan-Liste (Warenkorb)")
 
             if not st.session_state["multibuchung_liste"]:
-                st.info("Der Warenkorb ist leer. Scannen Sie Artikel mit der Live-Kamera.")
+                st.info("Der Warenkorb ist leer. Scannen Sie Artikel mit der Kamera.")
             else:
                 cart_df = pd.DataFrame(st.session_state["multibuchung_liste"])
                 st.dataframe(cart_df[["bezeichnung", "code", "lagerort", "art", "menge", "einheit"]], use_container_width=True, hide_index=True)
 
-                kommentar_gesamt = st.text_input("Projekt / Baustelle für alle Artikel im Warenkorb", placeholder="z.B. BV Bahnhofstraße", key="kommentar_multibuchung")
+                kommentar_gesamt = st.text_input("Projekt / Baustelle (optional)", placeholder="z.B. BV Bahnhofstraße (leer lassen, wenn kein Auftrag)", key="kommentar_multibuchung")
 
                 col_c1, col_c2 = st.columns(2)
                 with col_c1:
                     if st.button("🚀 Alle Positionen jetzt gesammelt buchen", type="primary", use_container_width=True):
                         try:
-                            current_user = st.session_state.get("user_data", {}).get("name", "Mitarbeiter")
+                            # Benutzer sauber aus Session ermitteln
+                            user_data = st.session_state.get("user_data", {})
+                            current_user = user_data.get("name") or user_data.get("benutzername") or user_data.get("username") or "Mitarbeiter"
+                            
+                            projekt_text = kommentar_gesamt.strip() if kommentar_gesamt else "-"
+
                             for item in st.session_state["multibuchung_liste"]:
                                 alter_b = item["bestand_alt"]
                                 menge_b = item["menge"]
@@ -226,7 +226,7 @@ def render_lager_verwaltung(supabase):
                                     "art": "Einbuchung" if ist_zugang else "Ausbuchung",
                                     "menge": menge_b,
                                     "benutzer": current_user,
-                                    "kommentar": kommentar_gesamt or "Multibuchung"
+                                    "kommentar": projekt_text
                                 }).execute()
 
                             st.session_state["multibuchung_liste"] = []
@@ -452,7 +452,6 @@ def render_lager_verwaltung(supabase):
             st.error("⛔ Sie haben keine Berechtigung, das Entnahmeprotokoll einzusehen.")
         else:
             try:
-                # Nach ID absteigend sortieren (neueste Einträge zuerst)
                 b_res = supabase.table("lager_bewegungen").select("*").order("id", desc=True).limit(200).execute()
                 bewegungen = b_res.data or []
 
@@ -465,14 +464,13 @@ def render_lager_verwaltung(supabase):
                     for b in bewegungen:
                         mat_info = mat_map.get(b.get("material_id"), {})
                         log_daten.append({
-                            "ID": b.get("id"),
                             "Art": b.get("art", "-"),
                             "Artikel": mat_info.get("bezeichnung", "Unbekannt"),
                             "Code": mat_info.get("artikelnummer", "-"),
                             "Menge": b.get("menge", 0),
                             "Einheit": mat_info.get("einheit", "Stk."),
                             "Benutzer": b.get("benutzer", "Unbekannt"),
-                            "Projekt / Kommentar": b.get("kommentar", "-")
+                            "Projekt / Baustelle": b.get("kommentar", "-")
                         })
 
                     log_df = pd.DataFrame(log_daten)

@@ -173,7 +173,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_auftraege_verwaltung(supabase):
     st.title("📋 4. Auftrags- & Einsatzmanagement")
-    st.caption("Planen Sie Aufträge inklusive Material-Bedarfsliste (Soll-Stückliste) und Bestandsprüfung.")
+    st.caption("Planen Sie Aufträge inklusive erweiterbarer Material-Bedarfsliste (Soll-Stückliste) und Bestandsprüfung.")
 
     if not hat_recht("4", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Auftragsmodul aufzurufen.")
@@ -473,9 +473,8 @@ def render_auftraege_verwaltung(supabase):
     if darf_erstellen and len(tabs) > 1:
         with tabs[1]:
             st.subheader("Neuen Auftrag anlegen & Materialbedarf planen")
-            st.caption("Planen Sie hier direkt das benötigte Material im Voraus. Die App prüft sofort, ob der Lagerbestand ausreicht oder ob Artikel nachbestellt werden müssen.")
+            st.caption("Planen Sie hier direkt das benötigte Material im Voraus. Sie können Artikel flexibel hinzufügen, Mengen verändern oder wieder entfernen.")
 
-            # Initialisierung von Session State für die temporäre Materialliste beim Erstellen
             if "neuer_auftrag_material_liste" not in st.session_state:
                 st.session_state["neuer_auftrag_material_liste"] = []
 
@@ -534,10 +533,10 @@ def render_auftraege_verwaltung(supabase):
                 
                 submitted_auftrag = st.form_submit_button("💾 Auftrag anlegen & Material übernehmen", type="primary", use_container_width=True)
 
-            # --- SEPARATER BEREICH FÜR DIE MATERIALPLANUNG BEIM ERSTELLEN ---
+            # --- SEPARATER BEREICH FÜR DIE DYNAMISCHE MATERIALPLANUNG BEIM ERSTELLEN ---
             st.markdown("---")
             st.subheader("📦 Material-Bedarfsplanung (Soll-Liste für diesen Auftrag)")
-            st.caption("Fügen Sie hier Artikel aus dem Lager hinzu. Die App prüft sofort, ob der Bestand reicht oder ob Artikel bestellt werden müssen.")
+            st.caption("Fügen Sie Artikel hinzu, passen Sie Mengenangaben flexibel an oder löschen Sieeinzelne Positionen.")
 
             col_mat_add1, col_mat_add2, col_mat_add3 = st.columns([3, 1, 1])
             with col_mat_add1:
@@ -552,9 +551,8 @@ def render_auftraege_verwaltung(supabase):
             with col_mat_add3:
                 st.write("") # Spacer
                 st.write("")
-                if st.button("➕ Zur Liste hinzufügen", use_container_width=True):
+                if st.button("➕ Hinzufügen", use_container_width=True):
                     if plan_artikel:
-                        # Prüfen, ob Artikel schon in der temporären Liste ist
                         existiert = False
                         for item in st.session_state["neuer_auftrag_material_liste"]:
                             if item["id"] == plan_artikel["id"]:
@@ -572,37 +570,71 @@ def render_auftraege_verwaltung(supabase):
                         st.toast(f"Artikel '{plan_artikel['bezeichnung']}' hinzugefügt.", icon="✅")
                         st.rerun()
 
-            # Anzeige der aktuellen Planungs-Liste mit Bestands-Check
+            # --- ANZEIGE DER INTERAKTIVEN PLANUNGSLISTE (EINZELN BEARBEITBAR & LÖSCHBAR) ---
             if st.session_state["neuer_auftrag_material_liste"]:
                 st.markdown("##### 📋 Geplante Artikel für diesen Auftrag:")
-                anzeige_daten = []
+                
+                # Tabellen-Header
+                h_col1, h_col2, h_col3, h_col4, h_col5 = st.columns([3, 2, 2, 2, 1])
+                h_col1.caption("**Artikel**")
+                h_col2.caption("**Lagerbestand**")
+                h_col3.caption("**Geplante Menge**")
+                h_col4.caption("**Status / Bestands-Check**")
+                h_col5.caption("**Aktion**")
+
+                idx_to_remove = None
+
                 for idx, item in enumerate(st.session_state["neuer_auftrag_material_liste"]):
+                    c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 2, 1])
+                    
                     bestand = item["ist_bestand"]
                     bedarf = item["menge"]
                     einheit = item["einheit"]
+
+                    # Spalte 1: Artikelname
+                    c1.write(f"**{item['bezeichnung']}**")
                     
-                    if bestand >= bedarf:
-                        status_text = "🟢 Genug auf Lager"
+                    # Spalte 2: Lagerbestand
+                    c2.write(f"{bestand} {einheit}")
+
+                    # Spalte 3: Dynamische Mengenänderung per Num-Input
+                    neue_menge = c3.number_input(
+                        "Menge",
+                        min_value=1,
+                        value=int(bedarf),
+                        step=1,
+                        key=f"edit_menge_plan_{idx}",
+                        label_visibility="collapsed"
+                    )
+                    if neue_menge != bedarf:
+                        item["menge"] = neue_menge
+                        st.rerun()
+
+                    # Spalte 4: Live Status-Check
+                    if bestand >= neue_menge:
+                        c4.success("🟢 Reicht aus")
                     else:
-                        fehlend = bedarf - bestand
-                        status_text = f"🔴 FEHLT! Noch {fehlend} {einheit} nachbestellen!"
+                        fehlend = neue_menge - bestand
+                        c4.error(f"🔴 Fehlt! ({fehlend} {einheit})")
 
-                    anzeige_daten.append({
-                        "Artikel": item["bezeichnung"],
-                        "Benötigt": f"{bedarf} {einheit}",
-                        "Lagerbestand": f"{bestand} {einheit}",
-                        "Status / Info": status_text
-                    })
-                
-                st.dataframe(pd.DataFrame(anzeige_daten), use_container_width=True, hide_index=True)
+                    # Spalte 5: Einzeln löschen
+                    if c5.button("🗑️", key=f"del_plan_item_{idx}"):
+                        idx_to_remove = idx
 
-                if st.button("🗑️ Geplante Material-Liste leeren"):
+                # Löschen ausführen, falls geklickt
+                if idx_to_remove is not None:
+                    geloeschter_artikel = st.session_state["neuer_auftrag_material_liste"].pop(idx_to_remove)
+                    st.toast(f"'{geloeschter_artikel['bezeichnung']}' aus der Liste entfernt.", icon="ℹ️")
+                    st.rerun()
+
+                st.markdown("---")
+                if st.button("❌ Alle geplanten Artikel verwerfen"):
                     st.session_state["neuer_auftrag_material_liste"] = []
                     st.rerun()
             else:
                 st.info("Bisher noch keine Artikel für die Planung ausgewählt.")
 
-            # Wenn der Haupt-Button geklickt wurde, speichern wir den Auftrag UND die Materialliste in Supabase
+            # Wenn der Haupt-Form-Button geklickt wird
             if submitted_auftrag:
                 if not n_arbeiten:
                     st.warning("Bitte auszuführende Arbeiten angeben.")
@@ -638,7 +670,7 @@ def render_auftraege_verwaltung(supabase):
                             team_inserts = [{"auftrag_id": neu_id, "mitarbeiter_id": m_id} for m_id in n_team]
                             supabase.table("auftrag_mitarbeiter").insert(team_inserts).execute()
 
-                            # 2. Geplantes Material in auftrag_material eintragen (und ggf. für die Planung vormerken)
+                            # 2. Geplantes Material in auftrag_material eintragen
                             if st.session_state["neuer_auftrag_material_liste"]:
                                 mat_inserts = []
                                 for m_item in st.session_state["neuer_auftrag_material_liste"]:
@@ -650,7 +682,7 @@ def render_auftraege_verwaltung(supabase):
                                     })
                                 supabase.table("auftrag_material").insert(mat_inserts).execute()
 
-                        # Session State zurücksetzen
+                        # Session State leeren
                         st.session_state["neuer_auftrag_material_liste"] = []
 
                         st.success(f"Auftrag {final_auftragsnummer} inklusive Material-Soll-Liste erfolgreich angelegt!")

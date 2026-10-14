@@ -90,8 +90,8 @@ def render_rechnungen_verwaltung(supabase):
     try:
         vorlagen_res = supabase.table("rechnung_vorlagen").select("*").order("bezeichnung").execute()
         vorlagen_liste = vorlagen_res.data or []
-        # Mapping von material_id zu Vorlagen-Datensatz & Preis
-        vorlagen_lager_map = {v["material_id"]: v for v in vorlagen_liste if v.get("material_id")}
+        # Mapping mit str() abgesichert gegen ID-Typkonflikte
+        vorlagen_lager_map = {str(v["material_id"]): v for v in vorlagen_liste if v.get("material_id")}
     except Exception:
         vorlagen_liste = []
         vorlagen_lager_map = {}
@@ -248,7 +248,7 @@ def render_rechnungen_verwaltung(supabase):
                         "einzelpreis_netto": 120.0
                     })
 
-                    # 2. Lager- & Fremdmaterialien einfügen mit Preisen aus dem Katalog
+                    # 2. Lager- & Fremdmaterialien einfügen mit abgesichertem Preisabgleich
                     if auftrag_mat:
                         for am in auftrag_mat:
                             if am.get("ist_fremdmaterial"):
@@ -258,8 +258,8 @@ def render_rechnungen_verwaltung(supabase):
                                 mat_id = am.get("material_id")
                                 mat_info = lager_dict.get(mat_id, {})
                                 bez = mat_info.get("bezeichnung", "Lagerartikel")
-                                # Preis aus Katalog-Map holen, falls vorhanden
-                                kat_item = vorlagen_lager_map.get(mat_id)
+                                # Preis über str(mat_id) aus Katalog-Map holen
+                                kat_item = vorlagen_lager_map.get(str(mat_id)) if mat_id else None
                                 preis = float(kat_item["einzelpreis_netto"]) if kat_item else 10.0
                             
                             st.session_state["rechnung_positionen_temp"].append({
@@ -298,7 +298,7 @@ def render_rechnungen_verwaltung(supabase):
             if sel_katalog_item:
                 item_data = sel_katalog_item["item"]
                 if sel_katalog_item["typ"] == "lager":
-                    kat_match = vorlagen_lager_map.get(item_data["id"])
+                    kat_match = vorlagen_lager_map.get(str(item_data.get("id")))
                     default_preset_preis = float(kat_match["einzelpreis_netto"]) if kat_match else 10.0
                 else:
                     default_preset_preis = float(item_data["einzelpreis_netto"])
@@ -417,7 +417,7 @@ def render_rechnungen_verwaltung(supabase):
             else:
                 for mat in lager_material_liste:
                     m_id = mat["id"]
-                    existierende_vorlage = vorlagen_lager_map.get(m_id)
+                    existierende_vorlage = vorlagen_lager_map.get(str(m_id))
                     aktiver_preis = float(existierende_vorlage["einzelpreis_netto"]) if existierende_vorlage else 0.0
 
                     with st.form(f"form_lager_preis_{m_id}"):
@@ -442,13 +442,11 @@ def render_rechnungen_verwaltung(supabase):
                         if b_save_p:
                             try:
                                 if existierende_vorlage:
-                                    # Vorlage aktualisieren
                                     supabase.table("rechnung_vorlagen").update({
                                         "einzelpreis_netto": neuer_kat_preis,
                                         "einheit": mat.get('einheit', 'Stk.')
                                     }).eq("id", existierende_vorlage["id"]).execute()
                                 else:
-                                    # Neue Vorlage für diesen Lagerartikel erstellen
                                     supabase.table("rechnung_vorlagen").insert({
                                         "bezeichnung": mat["bezeichnung"],
                                         "kategorie": "Material",

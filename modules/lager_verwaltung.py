@@ -53,7 +53,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Turbo-Scan, Warenkorb mit Einzel-Löschung & rollenbasierte Logs.")
+    st.caption("High-Speed Lager: Turbo-Scan, Warenkorb, Sidebar-Warnungen & Logs.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -68,10 +68,22 @@ def render_lager_verwaltung(supabase):
     except Exception:
         material_liste = []
 
+    # --- SIDEBAR: BESTANDSWARNUNGEN ---
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🚨 Bestandswarnungen")
+    warn_liste = [m for m in material_liste if m.get('ist_bestand', 0) <= m.get('soll_bestand', 0)]
+    if warn_liste:
+        st.sidebar.warning(f"⚠️ {len(warn_liste)} Artikel unter/auf Mindestbestand!")
+        with st.sidebar.expander("🔍 Warnungen anzeigen"):
+            for wm in warn_liste:
+                st.sidebar.markdown(f"**{wm.get('bezeichnung')}**<br>Ort: `{wm.get('lagerort', '-')}`<br>Ist: **{wm.get('ist_bestand')}** | Soll: {wm.get('soll_bestand')}", unsafe_allow_html=True)
+                st.sidebar.divider()
+    else:
+        st.sidebar.success("✅ Alle Bestände im grünen Bereich!")
+
     if "multibuchung_liste" not in st.session_state:
         st.session_state["multibuchung_liste"] = []
 
-    # Session States initialisieren
     if "last_foto_id" not in st.session_state:
         st.session_state["last_foto_id"] = None
 
@@ -216,7 +228,6 @@ def render_lager_verwaltung(supabase):
             if not st.session_state["multibuchung_liste"]:
                 st.info("Der Warenkorb ist leer. Scannen Sie QR-Codes mit der Kamera.")
             else:
-                # Interaktive Anzeige der Warenkorb-Positionen mit einzelnem Lösch-Button
                 for idx, item in enumerate(st.session_state["multibuchung_liste"]):
                     c_row1, c_row2, c_row3, c_row4 = st.columns([3, 2, 2, 1])
                     with c_row1:
@@ -240,7 +251,8 @@ def render_lager_verwaltung(supabase):
                             user_data = st.session_state.get("user_data", {})
                             current_user = user_data.get("name") or user_data.get("benutzername") or user_data.get("username") or "Mitarbeiter"
                             
-                            projekt_text = kommentar_gesamt.strip() if kommentar_gesamt else "-"
+                            projekt_text = kommentar_gesamt.strip() if kommentar_gesamt else "Kein Auftrag"
+                            finaler_kommentar = f"Benutzer: {current_user} | Projekt: {projekt_text}"
 
                             for item in st.session_state["multibuchung_liste"]:
                                 alter_b = item["bestand_alt"]
@@ -250,12 +262,12 @@ def render_lager_verwaltung(supabase):
 
                                 supabase.table("lager_material").update({"ist_bestand": neuer_b}).eq("id", item["id"]).execute()
                                 
+                                # Ohne 'benutzer'-Spalte, alles sicher im Kommentar hinterlegt
                                 supabase.table("lager_bewegungen").insert({
                                     "material_id": item["id"],
                                     "art": "Einbuchung" if ist_zugang else "Ausbuchung",
                                     "menge": menge_b,
-                                    "benutzer": current_user,
-                                    "kommentar": projekt_text
+                                    "kommentar": finaler_kommentar
                                 }).execute()
 
                             st.session_state["multibuchung_liste"] = []
@@ -502,8 +514,7 @@ def render_lager_verwaltung(supabase):
                             "Code": mat_info.get("artikelnummer", "-"),
                             "Menge": m_val,
                             "Einheit": mat_info.get("einheit", "Stk."),
-                            "Benutzer": b.get("benutzer", "Unbekannt"),
-                            "Projekt / Baustelle": b.get("kommentar", "-")
+                            "Details / Kommentar": b.get("kommentar", "-")
                         })
 
                     log_df = pd.DataFrame(log_daten)

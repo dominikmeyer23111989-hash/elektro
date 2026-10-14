@@ -139,10 +139,6 @@ def render_lager_verwaltung(supabase):
     if "last_foto_id" not in st.session_state:
         st.session_state["last_foto_id"] = None
 
-    # Inventur-Zustand initialisieren, damit er bei Unterbrechungen erhalten bleibt
-    if "inventur_fortschritt" not in st.session_state:
-        st.session_state["inventur_fortschritt"] = {}
-
     tabs = st.tabs([
         "📊 Bestandsübersicht", 
         "⚡ Turbo-Scan & Multibuchung", 
@@ -455,7 +451,8 @@ def render_lager_verwaltung(supabase):
                                 "einheit": n_einheit,
                                 "lagerort": n_lagerort,
                                 "soll_bestand": n_soll,
-                                "ist_bestand": n_ist
+                                "ist_bestand": n_ist,
+                                "gezählter_wert": None
                             }).execute()
                             st.toast(f"✅ Artikel '{n_bezeichnung}' angelegt!", icon="🎉")
                             st.rerun()
@@ -521,10 +518,10 @@ def render_lager_verwaltung(supabase):
                     else:
                         st.error("Keine Berechtigung.")
 
-    # --- TAB 6: INVENTUR (Unterbrechbar & Zwischenspeicherbar) ---
+    # --- TAB 6: INVENTUR (Live-DB-Zwischenspeicherung & Häkchen) ---
     with tabs[5]:
-        st.subheader("📋 Systematische Inventur (Unterbrechbar)")
-        st.caption("Zählen Sie Ihr Lager in Etappen. Ihre Eingaben werden automatisch gemerkt. Sie können den Zählstand auch als Entwurf exportieren und am nächsten Tag fortsetzen!")
+        st.subheader("📋 Systematische Inventur (Live-Zwischengespeichert)")
+        st.caption("Ihre Eingaben werden automatisch in der Datenbank gespeichert. Artikel mit einem grünen Häkchen ✅ wurden bereits gezählt.")
         
         letzte_inventur_datum = "Noch nie durchgeführt"
         try:
@@ -544,42 +541,6 @@ def render_lager_verwaltung(supabase):
         elif not darf_bearbeiten:
             st.error("⛔ Keine Berechtigung.")
         else:
-            # Import / Export von Zähl-Entwürfen für mehrtägige Unterbrechungen
-            col_ent1, col_ent2 = st.columns(2)
-            with col_ent1:
-                # Aktuellen Zwischenstand exportieren
-                entwurf_export_liste = []
-                for m in material_liste:
-                    val = st.session_state.get(f"inv_val_{m['id']}", m.get('ist_bestand', 0))
-                    entwurf_export_liste.append({"artikelnummer": m.get('artikelnummer'), "bezeichnung": m.get('bezeichnung'), "gezählter_ist": val})
-                df_entwurf = pd.DataFrame(entwurf_export_liste)
-                csv_entwurf = df_entwurf.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="💾 Aktuellen Zähl-Entwurf exportieren",
-                    data=csv_entwurf,
-                    file_name=f"Inventur_Entwurf_{datetime.now().strftime('%Y-%m-%d')}.csv",
-                    mime="text/csv",
-                    help="Speichern Sie Ihren Stand, wenn Sie die Inventur aufteilen oder unterbrechen möchten."
-                )
-            with col_ent2:
-                # Entwurf wieder importieren
-                uploaded_entwurf = st.file_uploader("📂 Zähl-Entwurf hochladen (Fortsetzen)", type=["csv"], key="upload_inventur_entwurf")
-                if uploaded_entwurf is not None:
-                    try:
-                        df_up = pd.read_csv(uploaded_entwurf)
-                        for _, row in df_up.iterrows():
-                            art_nr = str(row.get('artikelnummer'))
-                            gez_wert = int(row.get('gezählter_ist', 0))
-                            mat_match = next((m for m in material_liste if str(m.get('artikelnummer')) == art_nr), None)
-                            if mat_match:
-                                st.session_state[f"inv_val_{mat_match['id']}"] = gez_wert
-                        st.toast("✅ Zähl-Entwurf erfolgreich geladen!", icon="📂")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Fehler beim Laden des Entwurfs: {e}")
-
-            st.markdown("---")
-
             # Tabellenkopf
             h1, h2, h3, h4 = st.columns([2, 1, 1, 2])
             with h1:
@@ -596,24 +557,36 @@ def render_lager_verwaltung(supabase):
             for m in material_liste:
                 col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
                 with col1:
-                    st.markdown(f"**{m.get('bezeichnung')}**<br>📍 `{m.get('lagerort', 'Kein Ort')}`", unsafe_allow_html=True)
+                    # Prüfen ob gezählt wurde (Spalte gezählter_wert ist nicht None)
+                    hat_gezahlt = m.get('gezählter_wert') is not None
+                    status_icon = " ✅" if hat_gezahlt else ""
+                    st.markdown(f"**{m..get('bezeichnung')}**{status_icon}<br>📍 `{m.get('lagerort', 'Kein Ort')}`", unsafe_allow_html=True)
                 with col2:
                     st.markdown(f"**{m.get('ist_bestand', 0)}** {m.get('einheit', 'Stk.')}")
                 with col3:
                     st.markdown(f"{m.get('soll_bestand', 0)} {m.get('einheit', 'Stk.')}")
                 with col4:
-                    # Wert aus Session holen oder mit System-Ist vorbelegen
-                    key_str = f"inv_val_{m['id']}"
-                    if key_str not in st.session_state:
-                        st.session_state[key_str] = int(m.get('ist_bestand', 0))
+                    # Vorbelegung aus DB-Zwischenstand oder System-Ist
+                    aktueller_wert = m.get('gezählter_wert')
+                    if aktueller_wert is None:
+                        aktueller_wert = int(m.get('ist_bestand', 0))
                     
+                    key_str = f"inv_db_val_{m['id']}"
                     gezahlt = st.number_input(
                         "Ist", 
                         min_value=0, 
-                        value=st.session_state[key_str], 
+                        value=int(aktueller_wert), 
                         key=key_str, 
                         label_visibility="collapsed"
                     )
+                    
+                    # Wenn der Wert geändert wird, live in DB zwischenspeichern
+                    if gezahlt != m.get('gezählter_wert'):
+                        try:
+                            supabase.table("lager_material").update({"gezählter_wert": gezahlt}).eq("id", m['id']).execute()
+                        except Exception:
+                            pass
+
                     inventur_daten[m['id']] = gezahlt
                 st.divider()
 
@@ -627,7 +600,11 @@ def render_lager_verwaltung(supabase):
                         inventur_kommentar = f"Benutzer: {current_user} | Inventur durchgeführt am {heute_datum}"
 
                         for mat_id, neuer_ist in inventur_daten.items():
-                            supabase.table("lager_material").update({"ist_bestand": neuer_ist}).eq("id", mat_id).execute()
+                            # Ist-Bestand aktualisieren und temporären Zählstand wieder auf None setzen
+                            supabase.table("lager_material").update({
+                                "ist_bestand": neuer_ist,
+                                "gezählter_wert": None
+                            }).eq("id", mat_id).execute()
                             
                             supabase.table("lager_bewegungen").insert({
                                 "material_id": mat_id,
@@ -636,29 +613,29 @@ def render_lager_verwaltung(supabase):
                                 "kommentar": inventur_kommentar
                             }).execute()
 
-                        # Entwurf nach erfolgreicher Buchung leeren
-                        for m in material_liste:
-                            k = f"inv_val_{m['id']}"
-                            if k in st.session_state:
-                                del st.session_state[k]
-
                         st.toast("Inventur erfolgreich abgeschlossen & Bestände aktualisiert!", icon="🎯")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Fehler: {e}")
+                        st.error(f"Fehler: {echym}")
 
             with col_fin2:
-                if st.button("🗑️ Zähl-Entwurf zurücksetzen", use_container_width=True):
-                    for m in material_liste:
-                        st.session_state[f"inv_val_{m['id']}"] = int(m.get('ist_bestand', 0))
-                    st.toast("Zählstand auf System-Ist zurückgesetzt.", icon="🔄")
-                    st.rerun()
+                if st.button("🗑️ Zwischenstand zurücksetzen", use_container_width=True):
+                    try:
+                        for m in material_liste:
+                            supabase.table("lager_material").update({"gezählter_wert": None}).eq("id", m['id']).execute()
+                        st.toast("Alle Zähl-Zwischenstände zurückgesetzt.", icon="🔄")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler: {e}")
 
             # PDF-Export für die Inventurliste
             st.markdown("---")
             inventur_pdf_daten = []
             for m in material_liste:
-                gezahlt_wert = st.session_state.get(f"inv_val_{m['id']}", m.get('ist_bestand', 0))
+                gezahlt_wert = m.get('gezählter_wert')
+                if gezahlt_wert is None:
+                    gezahlt_wert = m.get('ist_bestand', 0)
+                
                 inventur_pdf_daten.append([
                     str(m.get('artikelnummer', '-')),
                     str(m.get('bezeichnung', '')),
@@ -713,6 +690,7 @@ def render_lager_verwaltung(supabase):
                             "einheit": str(row.get('einheit', 'Stk.')),
                             "soll_bestand": int(row.get('soll_bestand', 5)),
                             "ist_bestand": int(row.get('ist_bestand', 0)),
+                            "gezählter_wert": None,
                             "lagerort": str(row.get('lagerort', 'Hauptlager'))
                         }).execute()
                     st.toast("Erfolgreich importiert!", icon="🎉")

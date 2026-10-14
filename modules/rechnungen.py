@@ -93,8 +93,8 @@ def render_rechnungen_verwaltung(supabase):
         vorlagen_liste = []
 
     try:
-        # Alle Aufträge inklusive Kunden-Daten laden
-        a_res = supabase.table("auftraege").select("id, auftragsnummer, freitext_kunde, arbeiten, status, kunden(vorname, nachname, firma)").order("erstellt_am", desc=True).execute()
+        # Korrigierte Abfrage ohne nicht-existierende Spalten
+        a_res = supabase.table("auftraege").select("id, auftragsnummer, freitext_kunde, arbeiten, status, kunden(vorname, nachname)").order("erstellt_am", desc=True).execute()
         alle_auftraege = a_res.data or []
     except Exception as e:
         alle_auftraege = []

@@ -274,8 +274,8 @@ def render_rechnungen_verwaltung(supabase):
         st.markdown("---")
         st.markdown("##### 🛠️ Rechnung bearbeiten, Preise anpassen & finalisieren")
 
-        # 1. AUSWAHL AUS LAGER ODER VORLAGEN (AUßERHALB DES FORMULARS, DAMIT DER PREIS DYNAMISCH AKTUALISIERT WIRD)
-        st.markdown("##### Artikel aus Lager oder Vorlagen hinzufügen")
+        # 1. AUSWAHL AUS LAGER ODER VORLAGEN (OHNE MANUELLES PREIS-EINGABEFELD, NUTZT IMMER DEN KATALOG-PREIS)
+        st.markdown("##### Artikel aus Lager oder Vorlagen hinzufügen (Preise werden automatisch aus dem Preiskatalog übernommen)")
         katalog_optionen = [None] + [{"typ": "lager", "item": m} for m in lager_material_liste] + [{"typ": "vorlage", "item": v} for v in vorlagen_liste if not v.get("material_id")]
         sel_katalog_item = st.selectbox(
             "Artikel / Vorlage wählen",
@@ -283,22 +283,22 @@ def render_rechnungen_verwaltung(supabase):
             format_func=lambda x: "--- Artikel wählen ---" if x is None else (f"[Lager] {x['item']['bezeichnung']} (Bestand: {x['item']['ist_bestand']} {x['item'].get('einheit', 'Stk.')})" if x['typ'] == 'lager' else f"[Vorlage] {x['item']['bezeichnung']} ({float(x['item']['einzelpreis_netto']):.2f} EUR)")
         )
 
-        # Automatischen Standardpreis aus dem Preiskatalog ermitteln
-        default_preset_preis = 10.0
+        # Automatischen Standardpreis und Bezeichnung ermitteln
+        auto_preis = 0.0
         if sel_katalog_item:
             item_data = sel_katalog_item["item"]
             if sel_katalog_item["typ"] == "lager":
                 kat_match = vorlagen_lager_map.get(str(item_data.get("id")))
-                default_preset_preis = float(kat_match["einzelpreis_netto"]) if kat_match else 10.0
+                auto_preis = float(kat_match["einzelpreis_netto"]) if kat_match else 0.0
             else:
-                default_preset_preis = float(item_data["einzelpreis_netto"])
+                auto_preis = float(item_data["einzelpreis_netto"])
+            
+            st.info(f"💡 Hinterlegter Katalogpreis für diesen Artikel: **{auto_preis:.2f} € netto**")
 
-        col_kat1, col_kat2, col_kat3 = st.columns(3)
+        col_kat1, col_kat2 = st.columns([2, 1])
         with col_kat1:
             kat_menge = st.number_input("Menge", min_value=0.1, value=1.0, step=0.5, key="kat_menge_inp")
         with col_kat2:
-            kat_preis_netto = st.number_input("Einzelpreis netto (EUR)", min_value=0.0, value=float(default_preset_preis), step=5.0, key="kat_preis_inp")
-        with col_kat3:
             st.write("")
             st.write("")
             if st.button("➕ Artikel hinzufügen", use_container_width=True):
@@ -308,15 +308,15 @@ def render_rechnungen_verwaltung(supabase):
                     st.session_state["rechnung_positionen_temp"].append({
                         "beschreibung": bez,
                         "menge": kat_menge,
-                        "einzelpreis_netto": kat_preis_netto
+                        "einzelpreis_netto": auto_preis
                     })
-                    st.success(f"'{bez}' hinzugefügt!")
+                    st.success(f"'{bez}' (á {auto_preis:.2f} €) hinzugefügt!")
                     st.rerun()
                 else:
                     st.warning("Bitte wählen Sie zuerst einen Artikel aus.")
 
         st.markdown("---")
-        st.markdown("##### Freie Position hinzufügen")
+        st.markdown("##### Freie Position hinzufügen (mit manuellem Preis)")
         col_p1, col_p2, col_p3 = st.columns([3, 1, 1])
         with col_p1:
             p_beschr = st.text_input("Positionsbeschreibung", placeholder="z.B. Monteurstunde / Sonderarbeit", key="frei_beschr_inp")

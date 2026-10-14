@@ -76,21 +76,9 @@ def generate_rechnung_pdf(rechnung, positionen):
 
     return pdf.output()
 
-def hat_recht(modul_id, aktion="sehen"):
-    user = st.session_state.get("user_data", {})
-    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
-        return True
-    rechte = user.get("rechte", [])
-    return f"{modul_id}_{aktion}" in rechte
-
 def render_rechnungen_verwaltung(supabase):
-    st.title("💶 6. Rechnungs- & Abrechnungsmodul")
-    st.caption("Rechnen Sie Aufträge ab, legen Sie flexible Preise fest und exportieren Sie Rechnungen als PDF.")
-
-    # Berechtigungsprüfung (Modul-ID 6 oder Admin)
-    user_data = st.session_state.get("user_data", {})
-    user_rolle = user_data.get("rolle", "")
-    is_admin = user_rolle in ["Admin", "Inhaber", "Chef", "Büro"]
+    st.title("💶 11. Rechnungs- & Abrechnungsmodul")
+    st.caption("Verwalten Sie Preisvorlagen, rechnen Sie erledigte Aufträge ab und exportieren Sie professionelle Rechnungs-PDFs.")
 
     try:
         r_res = supabase.table("rechnungen").select("*").order("erstellt_am", desc=True).execute()
@@ -99,20 +87,52 @@ def render_rechnungen_verwaltung(supabase):
         rechnungen_liste = []
 
     try:
-        a_res = supabase.table("auftraege").select("id, auftragsnummer, freitext_kunde, kunden(vorname, nachname, firma), status").execute()
-        auftraege_liste = a_res.data or []
+        vorlagen_res = supabase.table("rechnung_vorlagen").select("*").order("bezeichnung").execute()
+        vorlagen_liste = vorlagen_res.data or []
     except Exception:
-        auftraege_liste = []
+        vorlagen_liste = []
 
-    tabs = st.tabs(["📄 Rechnungsübersicht", "➕ Neue Rechnung erstellen"])
+    try:
+        # Nur erledigte Aufträge laden
+        a_res = supabase.table("auftraege").select("id, auftragsnummer, freitext_kunde, arbeiten, kunden(vorname, nachname, firma), status").eq("status", "Erledigt").execute()
+        erledigte_auftraege = a_res.data or []
+    except Exception:
+        erledigte_auftraege = []
 
-    # --- TAB 1: RECHNUNGSÜBERSICHT ---
+    tabs = st.tabs([
+        "📄 Rechnungsübersicht & Filter", 
+        "🚀 Erledigte Aufträge abrechnen", 
+        "⚙️ Standard-Preiskatalog"
+    ])
+
+    # =========================================================================
+    # TAB 1: RECHNUNGSÜBERSICHT & FILTER
+    # =========================================================================
     with tabs[0]:
-        st.subheader("Erstellte Rechnungen")
-        if not rechnungen_liste:
-            st.info("Noch keine Rechnungen erstellt.")
+        st.subheader("Übersicht aller Rechnungen")
+
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            such_text = st.text_input("🔍 Suche nach Rechnungsnummer oder Kunden", placeholder="z. B. RE-2026 oder Müller")
+        with col_f2:
+            status_filter = st.selectbox("Status-Filter", ["Alle", "Offen", "Bezahlt", "Storniert"])
+
+        gefilterte_rechnungen = []
+        for r in rechnungen_liste:
+            if status_filter != "Alle" and r.get("status") != status_filter:
+                continue
+            if such_text:
+                txt = such_text.lower()
+                r_nr = str(r.get("rechnungsnummer", "")).lower()
+                k_name = str(r.get("kunde_name", "")).lower()
+                if txt not in r_nr and txt not in k_name:
+                    continue
+            gefilterte_rechnungen.append(r)
+
+        if not gefilterte_rechnungen:
+            st.info("Keine Rechnungen gefunden, die den Kriterien entsprechen.")
         else:
-            for r in rechnungen_liste:
+            for r in gefilterte_rechnungen:
                 try:
                     pos_res = supabase.table("rechnungspositionen").select("*").eq("rechnung_id", r["id"]).execute()
                     positionen = pos_res.data or []
@@ -123,10 +143,24 @@ def render_rechnungen_verwaltung(supabase):
                 mwst = netto * (float(r.get("mwst_satz", 19.0)) / 100.0)
                 brutto = netto + mwst
 
-                with st.expander(f"Rechnung #{r.get('rechnungsnummer')} | Kunde: {r.get('kunde_name')} | Brutto: {brutto:.2f} EUR | Status: {r.get('status')}"):
-                    st.write(f"**Datum:** {r.get('rechnungs_datum')}")
-                    st.write(f"**Mehrwertsteuersatz:** {r.get('mwst_satz')}%")
-                    
+                status = r.get('status', 'Offen')
+                status_icon = "🟢 Bezahlt" if status == "Bezahlt" else ("🔴 Offen" if status == "Offen" else "⚪ Storniert")
+
+                with st.expander(f"Rechnung #{r.get('rechnungsnummer')} | Kunde: {r.get('kunde_name')} | Brutto: {brutto:.2f} EUR | {status_icon}"):
+                    col_det1, col_det2 = st.columns(2)
+                    with col_det1:
+                        st.write(f"**Rechnungsdatum:** {r.get('rechnungs_datum')}")
+                        st.write(f"**MwSt.-Satz:** {r.get('mwst_satz')}%")
+                    with col_det2:
+                        neuer_status = st.selectbox("Status ändern", ["Offen", "Bezahlt", "Storniert"], index=["Offen", "Bezahlt", "Storniert"].index(status), key=f"status_sel_{r['id']}")
+                        if neuer_status != status:
+                            try:
+                                supabase.table("rechnungen").update({"status": neuer_status}).eq("id", r["id"]).execute()
+                                st.toast("Status aktualisiert!", icon="✅")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Fehler: {e}")
+
                     if positionen:
                         st.markdown("**Positionen:**")
                         df_p = pd.DataFrame([{
@@ -149,40 +183,112 @@ def render_rechnungen_verwaltung(supabase):
                         key=f"dl_rech_{r['id']}"
                     )
 
-    # --- TAB 2: NEUE RECHNUNG ERSTELLEN ---
+    # =========================================================================
+    # TAB 2: ERLEDIGTE AUFTRÄGE ABRECHNEN
+    # =========================================================================
     with tabs[1]:
-        st.subheader("Neue Rechnung aus Auftrag oder Direktabrechnung erstellen")
+        st.subheader("Erledigte Aufträge in Rechnungen umwandeln")
+        st.caption("Hier sehen Sie alle Aufträge, die vom Team als 'Erledigt' markiert wurden und noch abgerechnet werden können.")
 
         if "rechnung_positionen_temp" not in st.session_state:
             st.session_state["rechnung_positionen_temp"] = []
+
+        if not erledigte_auftraege:
+            st.info("Aktuell gibt es keine erledigten Aufträge, die auf Abrechnung warten.")
+        else:
+            ausgewaehlter_auftrag = st.selectbox(
+                "Erledigten Auftrag auswählen",
+                options=[None] + erledigte_auftraege,
+                format_func=lambda x: "--- Auftrag wählen ---" if x is None else f"Auftrag {x.get('auftragsnummer')} | Kunde: {x.get('kunden', {}).get('nachname', '') or x.get('freitext_kunde', 'Unbekannt')} | {x.get('arbeiten', '')[:40]}..."
+            )
+
+            if ausgewaehlter_auftrag:
+                # Kundenname ermitteln
+                k = ausgewaehlter_auftrag.get("kunden") or {}
+                k_name_auto = f"{k.get('vorname', '')} {k.get('nachname', '')}".strip()
+                if not k_name_auto:
+                    k_name_auto = ausgewaehlter_auftrag.get("freitext_kunde", "Kunde")
+
+                st.success(f"Auftrag {ausgewaehlter_auftrag.get('auftragsnummer')} für Kunde **{k_name_auto}** ausgewählt.")
+
+                # Material des Auftrags laden
+                try:
+                    am_res = supabase.table("auftrag_material").select("*, lager_material(bezeichnung, einheit)").eq("auftrag_id", ausgewaehlter_auftrag["id"]).execute()
+                    auftrag_mat = am_res.data or []
+                except Exception:
+                    auftrag_mat = []
+
+                if st.button("📥 Auftragsdaten & Material in Positionen übernehmen"):
+                    st.session_state["rechnung_positionen_temp"] = []
+                    
+                    # 1. Leistung / Arbeit als Position
+                    st.session_state["rechnung_positionen_temp"].append({
+                        "beschreibung": f"Montage- & Elektroarbeiten gem. Auftrag {ausgewaehlter_auftrag.get('auftragsnummer')}: {ausgewaehlter_auftrag.get('arbeiten', '')}",
+                        "menge": 1.0,
+                        "einzelpreis_netto": 150.0  # Richtwert, anpassbar
+                    })
+
+                    # 2. Materialpositionen übernehmen
+                    for am in auftrag_mat:
+                        if am.get("ist_fremdmaterial"):
+                            bez = am.get("freitext_bezeichnung", "Fremdteil")
+                        else:
+                            minfo = am.get("lager_material") or {}
+                            bez = minfo.get("bezeichnung", "Material")
+                        
+                        st.session_state["rechnung_positionen_temp"].append({
+                            "beschreibung": f"Material: {bez}",
+                            "menge": float(am.get("menge", 1)),
+                            "einzelpreis_netto": 10.0 # Standardpreis als Start
+                        })
+                    st.toast("Daten in Rechnung übernommen!", icon="🎯")
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown("##### 🛠️ Rechnung bearbeiten & finalisieren")
 
         with st.form("neue_rechnung_form"):
             col1, col2 = st.columns(2)
             with col1:
                 default_r_nr = f"RE-{datetime.now().strftime('%Y%m%d')}-01"
                 r_nummer = st.text_input("Rechnungsnummer *", value=default_r_nr)
-                
-                auftrag_optionen = [None] + auftraege_liste
-                sel_auftrag = st.selectbox(
-                    "Bezug zu Auftrag (optional)",
-                    options=auftrag_optionen,
-                    format_func=lambda x: "--- Keine Auftragsverknüpfung ---" if x is None else f"Auftrag {x.get('auftragsnummer')} ({x.get('status', '-')})"
-                )
+                r_kunde = st.text_input("Kundenname / Firma *", value=k_name_auto if 'k_name_auto' in locals() else "", placeholder="z. B. Hans Müller")
             with col2:
-                r_kunde = st.text_input("Kundenname / Firma *", placeholder="z.B. Hans Müller GmbH")
                 r_mwst = st.number_input("Mehrwertsteuersatz (%)", min_value=0.0, value=19.0, step=0.5)
 
+            st.markdown("##### Artikel aus Preiskatalog hinzufügen")
+            col_katalog1, col_katalog2, col_katalog3 = st.columns([3, 1, 1])
+            with col_katalog1:
+                sel_vorlage = st.selectbox(
+                    "Preiskatalog-Vorlage wählen",
+                    options=[None] + vorlagen_liste,
+                    format_func=lambda x: "--- Vorlage wählen ---" if x is None else f"{x['bezeichnung']} ({x['einzelpreis_netto']:.2f} EUR / {x['einheit']})"
+                )
+            with col_katalog2:
+                vorl_menge = st.number_input("Menge", min_value=0.1, value=1.0, step=0.5)
+            with col_katalog3:
+                st.write("")
+                st.write("")
+                btn_vorlage_add = st.form_submit_button("➕ Vorlage hinzufügen")
+
+            if btn_vorlage_add and sel_vorlage:
+                st.session_state["rechnung_positionen_temp"].append({
+                    "beschreibung": sel_vorlage["bezeichnung"],
+                    "menge": vorl_menge,
+                    "einzelpreis_netto": float(sel_vorlage["einzelpreis_netto"])
+                })
+                st.rerun()
+
             st.markdown("---")
-            st.markdown("##### 🛠️ Positionen hinzufügen (Stunden, Material, Pauschalen)")
-            
-            p_beschr = st.text_input("Positionsbeschreibung", placeholder="z.B. Arbeitsstunden Monteur / NYM-Leitung 3x1.5")
+            st.markdown("##### Freie Position hinzufügen")
+            p_beschr = st.text_input("Positionsbeschreibung", placeholder="z.B. Zusätzliche Steckdose installiert")
             col_p1, col_p2 = st.columns(2)
             with col_p1:
-                p_menge = st.number_input("Menge / Stunden", min_value=0.1, value=1.0, step=0.5)
+                p_menge = st.number_input("Menge / Stunden", min_value=0.1, value=1.0, step=0.5, key="p_menge_neu")
             with col_p2:
-                p_preis = st.number_input("Einzelpreis netto (EUR)", min_value=0.0, value=65.0, step=5.0)
+                p_preis = st.number_input("Einzelpreis netto (EUR)", min_value=0.0, value=65.0, step=5.0, key="p_preis_neu")
 
-            btn_add_pos = st.form_submit_button("➕ Position zur Rechnung hinzufügen")
+            btn_add_pos = st.form_submit_button("➕ Freie Position hinzufügen")
             if btn_add_pos:
                 if p_beschr.strip():
                     st.session_state["rechnung_positionen_temp"].append({
@@ -190,57 +296,119 @@ def render_rechnungen_verwaltung(supabase):
                         "menge": p_menge,
                         "einzelpreis_netto": p_preis
                     })
-                    st.toast("Position hinzugefügt!", icon="✅")
                     st.rerun()
-                else:
-                    st.warning("Bitte eine Positionsbeschreibung angeben.")
 
-        # Anzeige der aktuellen Positionen
+            submitted_rechnung = st.form_submit_button("💾 Rechnung speichern & ausstellen", type="primary", use_container_width=True)
+
+        # Aktuelle Rechnungspositionen anzeigen & bearbeiten
         if st.session_state["rechnung_positionen_temp"]:
             st.markdown("##### 📋 Aktuelle Rechnungspositionen:")
-            df_temp = pd.DataFrame([{
-                "Beschreibung": p["beschreibung"],
-                "Menge": p["menge"],
-                "Einzelpreis (Netto)": f"{p['einzelpreis_netto']:.2f} EUR",
-                "Gesamt (Netto)": f"{p['menge'] * p['einzelpreis_netto']:.2f} EUR"
-            } for p in st.session_state["rechnung_positionen_temp"]])
-            st.dataframe(df_temp, use_container_width=True, hide_index=True)
+            
+            idx_to_del = None
+            for idx, p in enumerate(st.session_state["rechnung_positionen_temp"]):
+                c_p1, c_p2, c_p3, c_p4 = st.columns([4, 2, 2, 1])
+                c_p1.write(f"**{p['beschreibung']}**")
+                c_p2.write(f"{p['menge']} Stk./Std.")
+                c_p3.write(f"{p['einzelpreis_netto']:.2f} € netto")
+                if c_p4.button("🗑️", key=f"del_pos_{idx}"):
+                    idx_to_del = idx
 
-            if st.button("🗑️ Alle Positionen zurücksetzen"):
+            if idx_to_del is not None:
+                st.session_state["rechnung_positionen_temp"].pop(idx_to_del)
+                st.rerun()
+
+            if st.button("🗑️ Alle Positionen löschen"):
                 st.session_state["rechnung_positionen_temp"] = []
                 st.rerun()
 
-            st.markdown("---")
-            if st.button("💾 Rechnung final speichern & erstellen", type="primary", use_container_width=True):
-                if not r_nummer.strip() or not r_kunde.strip():
-                    st.warning("Bitte Rechnungsnummer und Kundenname angeben.")
-                else:
+        if submitted_rechnung:
+            if not r_nummer.strip() or not r_kunde.strip():
+                st.warning("Bitte Rechnungsnummer und Kundenname angeben.")
+            elif not st.session_state["rechnung_positionen_temp"]:
+                st.warning("Bitte fügen Sie mindestens eine Position hinzu.")
+            else:
+                try:
+                    r_payload = {
+                        "rechnungsnummer": r_nummer.strip(),
+                        "auftrag_id": ausgewaehlter_auftrag["id"] if 'ausgewaehlter_auftrag' in locals() and ausgewaehlter_auftrag else None,
+                        "kunde_name": r_kunde.strip(),
+                        "mwst_satz": r_mwst,
+                        "status": "Offen"
+                    }
+                    res = supabase.table("rechnungen").insert(r_payload).execute()
+
+                    if res.data:
+                        rech_id = res.data[0]["id"]
+                        pos_inserts = [{
+                            "rechnung_id": rech_id,
+                            "beschreibung": p["beschreibung"],
+                            "menge": p["menge"],
+                            "einzelpreis_netto": p["einzelpreis_netto"]
+                        } for p in st.session_state["rechnung_positionen_temp"]]
+
+                        supabase.table("rechnungspositionen").insert(pos_inserts).execute()
+
+                    st.session_state["rechnung_positionen_temp"] = []
+                    st.success(f"Rechnung {r_nummer} erfolgreich erstellt!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Fehler beim Speichern der Rechnung: {e}")
+
+    # =========================================================================
+    # TAB 3: STANDARD-PREISKATALOG (VORLAGEN)
+    # =========================================================================
+    with tabs[2]:
+        st.subheader("⚙️ Standard-Preiskatalog & Vorlagen")
+        st.caption("Hinterlegen Sie hier feste Preise für Arbeitsstunden, Materialien oder Pauschalen, um sie beim Rechnenschreiben blitzschnell auszuwählen.")
+
+        with st.form("neue_vorlage_form"):
+            v_bech = st.text_input("Bezeichnung / Artikelname *", placeholder="z. B. Monteurstunde Standard")
+            col_v1, col_v2, col_v3 = st.columns(3)
+            with col_v1:
+                v_kat = st.selectbox("Kategorie", ["Arbeitszeit", "Material", "Pauschale"])
+            with col_v2:
+                v_einh = st.text_input("Einheit", value="Std.")
+            with col_v3:
+                v_preis = st.number_input("Nettopreis (EUR) *", min_value=0.0, value=65.0, step=5.0)
+
+            btn_save_vorl = st.form_submit_button("➕ Preisvorlage speichern", type="primary", use_container_width=True)
+            if btn_save_vorl:
+                if v_bech.strip():
                     try:
-                        # Rechnung in Supabase speichern
-                        r_payload = {
-                            "rechnungsnummer": r_nummer.strip(),
-                            "auftrag_id": sel_auftrag["id"] if sel_auftrag else None,
-                            "kunde_name": r_kunde.strip(),
-                            "mwst_satz": r_mwst,
-                            "status": "Offen"
-                        }
-                        res = supabase.table("rechnungen").insert(r_payload).execute()
-
-                        if res.data:
-                            rech_id = res.data[0]["id"]
-                            pos_inserts = [{
-                                "rechnung_id": rech_id,
-                                "beschreibung": p["beschreibung"],
-                                "menge": p["menge"],
-                                "einzelpreis_netto": p["einzelpreis_netto"]
-                            } for p in st.session_state["rechnung_positionen_temp"]]
-
-                            supabase.table("rechnungspositionen").insert(pos_inserts).execute()
-
-                        st.session_state["rechnung_positionen_temp"] = []
-                        st.success(f"Rechnung {r_nummer} erfolgreich erstellt!")
+                        supabase.table("rechnung_vorlagen").insert({
+                            "bezeichnung": v_bech.strip(),
+                            "kategorie": v_kat,
+                            "einheit": v_einh,
+                            "einzelpreis_netto": v_preis
+                        }).execute()
+                        st.success("Preisvorlage erfolgreich gespeichert!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Fehler beim Speichern der Rechnung: {e}")
+                        st.error(f"Fehler: {e}")
+                else:
+                    st.warning("Bitte eine Bezeichnung eingeben.")
+
+        st.markdown("---")
+        st.markdown("##### 📋 Vorhandene Preisvorlagen")
+        if vorlagen_liste:
+            df_vorlagen = pd.DataFrame([{
+                "ID": v["id"],
+                "Bezeichnung": v["bezeichnung"],
+                "Kategorie": v["kategorie"],
+                "Einheit": v["einheit"],
+                "Preis (Netto)": f"{float(v['einzelpreis_netto']):.2f} EUR"
+            } for v in vorlagen_liste])
+            st.dataframe(df_vorlagen, use_container_width=True, hide_index=True)
+            
+            # Lösch-Funktion für Vorlagen
+            del_id = st.selectbox("Vorlage zum Löschen auswählen", options=[None] + [v["id"] for v in vorlagen_liste], format_func=lambda x: "--- Bitte wählen ---" if x is None else next((v["bezeichnung"] for v in vorlagen_liste if v["id"] == x), ""))
+            if st.button("🗑️ Ausgewählte Vorlage löschen"):
+                if del_id:
+                    try:
+                        supabase.table("rechnung_vorlagen").delete().eq("id", del_id).execute()
+                        st.success("Vorlagen-Eintrag gelöscht!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler: {e}")
         else:
-            st.info("Fügen Sie mindestens eine Position hinzu, um die Rechnung speichern zu können.")
+            st.info("Noch keine Preisvorlagen angelegt.")

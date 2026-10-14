@@ -53,7 +53,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Turbo-Scan, präzise Mengeneingabe, Warenkorb & Logs.")
+    st.caption("High-Speed Lager: Turbo-Scan, präzise Mengenauswahl, Warenkorb & Logs.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -71,7 +71,7 @@ def render_lager_verwaltung(supabase):
     if "multibuchung_liste" not in st.session_state:
         st.session_state["multibuchung_liste"] = []
 
-    # Session States für den Kamera-Scanner initialisieren
+    # Session States initialisieren
     if "last_foto_id" not in st.session_state:
         st.session_state["last_foto_id"] = None
     if "current_scanned_code" not in st.session_state:
@@ -136,21 +136,25 @@ def render_lager_verwaltung(supabase):
     # --- TAB 2: TURBO-SCAN & MULTIBUCHUNG ---
     with tabs[1]:
         st.subheader("⚡ Turbo-Scan & Multibuchung")
-        st.caption("QR-Code fotografieren, gewünschte Menge einstellen und in den Warenkorb legen.")
+        st.caption("QR-Code fotografieren oder Artikel suchen, gewünschte Menge einstellen und in den Warenkorb legen.")
 
         if not material_liste:
             st.warning("Noch keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"], key="buchungs_art_one_tap")
+            col_m_mode, col_m_menge = st.columns(2)
+            with col_m_mode:
+                buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"], key="buchungs_art_one_tap")
+            with col_m_menge:
+                standard_menge = st.number_input("Standard-Menge", min_value=1, value=1, step=1, key="global_standard_menge")
 
             # Nativer Kamera-Input
             foto_input = st.camera_input("📷 QR-Code fotografieren", key="lager_camera_input")
 
             if foto_input:
                 foto_id = getattr(foto_input, "file_id", None) or hash(foto_input.getvalue())
-                if foto_id != st.session_state["last_foto_id"]:
+                if foto_id != st.session_state.get("last_foto_id"):
                     st.session_state["last_foto_id"] = foto_id
                     if QR_SCAN_AVAILABLE:
                         try:
@@ -162,84 +166,66 @@ def render_lager_verwaltung(supabase):
                                 st.session_state["current_scanned_code"] = code_erfasst
                                 st.success(f"🎯 **Erfolgreich erkannt! Code:** `{code_erfasst}`")
                             else:
-                                st.warning("⚠️ QR-Code auf dem Foto nicht eindeutig erkannt. Bitte nutzen Sie die Artikelsuche unten.")
+                                st.warning("⚠️ QR-Code auf dem Foto nicht eindeutig erkannt. Bitte nutzen Sie die Suche unten.")
                         except Exception as e:
                             st.error(f"Fehler bei der Bildverarbeitung: {e}")
 
-            # Eingabefeld gekoppelt mit dem Scan-Ergebnis
-            col_s1, col_s2 = st.columns([3, 1])
+            # Artikel-Ermittlung über Scan oder Direktsuche
+            current_code = st.session_state.get("current_scanned_code", "")
+            
+            st.markdown("---")
+            col_s1, col_s2 = st.columns(2)
             with col_s1:
-                default_code = st.session_state.get("current_scanned_code", "")
-                eingabe_code = st.text_input("🔍 Artikelnummer / Code", value=default_code, placeholder="Wird automatisch gefüllt oder eingetippt...", key="multiscan_input")
+                eingabe_code = st.text_input("🔍 Artikelnummer / Code", value=current_code, placeholder="Wird automatisch gefüllt...", key="multiscan_input")
             with col_s2:
-                st.write("")
-                if st.button("🔄 Reset", use_container_width=True):
-                    st.session_state["current_scanned_code"] = ""
-                    st.session_state["last_foto_id"] = None
-                    st.rerun()
+                such_filter_m = st.text_input("🔍 Oder Artikelsuche nach Name", placeholder="z.B. NYM...", key="filter_multi_artikel")
 
             aktueller_treffer = None
             if eingabe_code:
-                aktueller_treffer = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(eingabe_code).strip().lower()), None)
+                match = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(eingabe_code).strip().lower()), None)
+                if match:
+                    aktueller_treffer = match
             
-            if not aktueller_treffer and not eingabe_code:
-                such_filter_m = st.text_input("Oder Artikel in Liste suchen", placeholder="z.B. NYM...", key="filter_multi_artikel")
-                passende_m = [m for m in material_liste if such_filter_m.lower() in f"{m.get('bezeichnung')} {m.get('lagerort')} {m.get('artikelnummer')}".lower()] if such_filter_m else []
-                
+            if not aktueller_treffer and such_filter_m:
+                passende_m = [m for m in material_liste if such_filter_m.lower() in f"{m.get('bezeichnung')} {m.get('lagerort')} {m.get('artikelnummer')}".lower()]
                 if passende_m:
-                    label_m = st.selectbox("Treffer", options=[f"{m['bezeichnung']} | Ort: {m.get('lagerort')} | Bestand: {m['ist_bestand']}" for m in passende_m])
-                    aktueller_treffer = next((m for m in passende_m if f"{m['bezeichnung']} | Ort: {m.get('lagerort')} | Bestand: {m['ist_bestand']}" == label_m), None)
+                    label_options = {f"{m['bezeichnung']} (Ort: {m.get('lagerort', '-')}) [Bestand: {m['ist_bestand']} {m.get('einheit', 'Stk.')}]": m for m in passende_m}
+                    ausgewaehltes_label = st.selectbox("Wählen Sie den passenden Artikel aus:", options=list(label_options.keys()), key="select_such_treffer")
+                    aktueller_treffer = label_options[ausgewaehltes_label]
 
-            # Wenn ein Artikel gefunden wurde, klare Produktkarte mit Mengeneingabe anzeigen
+            # Wenn Artikel ermittelt wurde, eindeutige Produktkarte mit Mengenauswahl anzeigen
             if aktueller_treffer:
                 st.markdown("---")
                 with st.container(border=True):
                     st.success(f"📦 **{aktueller_treffer['bezeichnung']}**")
-                    
-                    col_info1, col_info2 = st.columns([2, 1])
-                    with col_info1:
-                        st.write(f"📍 **Lagerort:** {aktueller_treffer.get('lagerort', '-')}")
-                        st.write(f"🔢 **Code:** `{aktueller_treffer.get('artikelnummer', '-')}`")
-                        st.write(f"📊 **Aktueller Bestand:** {aktueller_treffer.get('ist_bestand', 0)} {aktueller_treffer.get('einheit', 'Stk.')}")
-                    
-                    with col_info2:
-                        code_val = str(aktueller_treffer.get('artikelnummer', ''))
-                        if code_val:
-                            try:
-                                qr = qrcode.QRCode(version=1, box_size=3, border=1)
-                                qr.add_data(code_val)
-                                qr.make(fit=True)
-                                img_q = qr.make_image(fill_color="black", back_color="white")
-                                buf_q = BytesIO()
-                                img_q.save(buf_q)
-                                st.image(buf_q.getvalue(), width=80)
-                            except Exception:
-                                pass
+                    st.write(f"📍 **Lagerort:** {aktueller_treffer.get('lagerort', '-')}")
+                    st.write(f"🔢 **Code:** `{aktueller_treffer.get('artikelnummer', '-')}`")
+                    st.write(f"📊 **Aktueller Bestand:** {aktueller_treffer.get('ist_bestand', 0)} {aktueller_treffer.get('einheit', 'Stk.')}")
 
-                    st.markdown("---")
-                    # Deutliche und bequeme Mengeneingabe für Mitarbeiter
-                    col_m1, col_m2 = st.columns([2, 2])
-                    with col_m1:
-                        menge_hinzu = st.number_input(f"Gewünschte Menge ({aktueller_treffer.get('einheit', 'Stk.')}):", min_value=1, value=1, step=1, key="menge_multi_add")
-                    with col_m2:
-                        st.write("")
-                        st.write("")
-                        if st.button("➕ In den Warenkorb legen", type="primary", use_container_width=True):
-                            st.session_state["multibuchung_liste"].append({
-                                "id": aktueller_treffer['id'],
-                                "bezeichnung": aktueller_treffer['bezeichnung'],
-                                "code": aktueller_treffer.get('artikelnummer', '-'),
-                                "bestand_alt": aktueller_treffer.get('ist_bestand', 0),
-                                "einheit": aktueller_treffer.get('einheit', 'Stk.'),
-                                "menge": menge_hinzu,
-                                "art": buchungs_art_multi,
-                                "lagerort": aktueller_treffer.get('lagerort', '-')
-                            })
-                            st.toast(f"✅ {menge_hinzu}x {aktueller_treffer['bezeichnung']} in den Warenkorb gelegt!", icon="🛒")
-                            # Scan zurücksetzen für den nächsten Artikel
-                            st.session_state["current_scanned_code"] = ""
-                            st.session_state["last_foto_id"] = None
-                            st.rerun()
+                    # Explizite und komfortable Mengenauswahl
+                    aktuelle_menge_artikel = st.number_input(
+                        f"Gewünschte Menge ({aktueller_treffer.get('einheit', 'Stk.')}):", 
+                        min_value=1, 
+                        value=int(standard_menge), 
+                        step=1, 
+                        key=f"menge_artikel_{aktueller_treffer['id']}"
+                    )
+
+                    if st.button("➕ In den Warenkorb legen", type="primary", use_container_width=True):
+                        st.session_state["multibuchung_liste"].append({
+                            "id": aktueller_treffer['id'],
+                            "bezeichnung": aktueller_treffer['bezeichnung'],
+                            "code": aktueller_treffer.get('artikelnummer', '-'),
+                            "bestand_alt": aktueller_treffer.get('ist_bestand', 0),
+                            "einheit": aktueller_treffer.get('einheit', 'Stk.'),
+                            "menge": aktuelle_menge_artikel,
+                            "art": buchungs_art_multi,
+                            "lagerort": aktueller_treffer.get('lagerort', '-')
+                        })
+                        st.toast(f"✅ {aktuelle_menge_artikel}x {aktueller_treffer['bezeichnung']} in den Warenkorb gelegt!", icon="🛒")
+                        st.session_state["current_scanned_code"] = ""
+                        st.session_state["last_foto_id"] = None
+                        st.rerun()
 
             # Warenkorb & Gesamtabschluss
             st.markdown("---")

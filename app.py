@@ -10,7 +10,8 @@ from modules.fahrzeuge import render_fahrzeug_verwaltung, render_fahrzeug_warnun
 from modules.gebaeude import render_gebaeude_verwaltung
 from modules.auftraege import render_auftraege_verwaltung
 from modules.tv_dashboard import render_tv_dashboard
-from modules.lager_verwaltung import render_lager_verwaltung 
+from modules.lager_verwaltung import render_lager_verwaltung
+from modules.rechnungen import render_rechnungen_verwaltung  # <--- NEU HINZUGEFÜGT
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
@@ -109,7 +110,8 @@ def render_login():
                                     "7_sehen", "7_erstellen", "7_bearbeiten", "7_loeschen",
                                     "8_sehen", "8_erstellen", "8_loeschen",
                                     "9_sehen", "9_bearbeiten",
-                                    "10_sehen", "10_exportieren"
+                                    "10_sehen", "10_exportieren",
+                                    "11_sehen", "11_erstellen", "11_bearbeiten", "11_loeschen"
                                 ]
 
                                 st.session_state["authenticated"] = True
@@ -364,7 +366,8 @@ def render_app():
         "7": "7. Gebäude",
         "8": "8. Dokumente",
         "9": "9. TV-Leitsystem",
-        "10": "10. Steuerberater-Export"
+        "10": "10. Steuerberater-Export",
+        "11": "11. Rechnungen & Abrechnung"  # <--- HIER NEU HINZUGEFÜGT
     }
 
     # Nur Module anzeigen, für die der User das Recht "sehen" besitzt
@@ -413,7 +416,7 @@ def render_app():
             if selected_main == "1":
                 render_mitarbeiter_verwaltung(supabase)
             elif selected_main == "2":
-                render_lager_verwaltung(supabase)  # <--- HIER EINGEBUNDEN
+                render_lager_verwaltung(supabase)
             elif selected_main == "3":
                 render_zeiterfassung(supabase)
             elif selected_main == "4":
@@ -428,6 +431,8 @@ def render_app():
                 render_tv_dashboard(supabase)
             elif selected_main == "10":
                 render_steuerberater_export(supabase)
+            elif selected_main == "11":
+                render_rechnungen_verwaltung(supabase)  # <--- HIER EINGEBUNDEN
             else:
                 st.title(available_menus[selected_main])
                 st.info("Dieses Modul wird als Nächstes ausgebaut.")

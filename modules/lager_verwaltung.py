@@ -5,15 +5,7 @@ from io import BytesIO
 import barcode
 from barcode.writer import ImageWriter
 import qrcode
-import cv2
-import numpy as np
-
-# OpenCV QR-Detector initialisieren
-try:
-    qr_detector = cv2.QRCodeDetector()
-    QR_SCAN_AVAILABLE = True
-except Exception:
-    QR_SCAN_AVAILABLE = False
+import streamlit.components.v1 as components
 
 def hat_recht(modul_id, aktion="sehen"):
     user = st.session_state.get("user_data", {})
@@ -24,7 +16,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: One-Tap Kamera-Scan, Multibuchungs-Warenkorb & Direkte QR-Anzeige.")
+    st.caption("High-Speed Lager: Instant Auto-Scan, Multibuchung, Etiketten & rollenbasierte Logs.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -32,6 +24,14 @@ def render_lager_verwaltung(supabase):
 
     darf_bearbeiten = hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
     darf_loeschen = hat_recht("2", "loeschen") or hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
+
+    # Prüfen, ob ein Auto-Scan über den URL-Parameter übergeben wurde
+    query_params = st.query_params
+    auto_scanned = query_params.get("scanned_code")
+    if auto_scanned:
+        st.session_state["auto_scanned_code"] = str(auto_scanned).strip()
+        st.query_params.clear()
+        st.rerun()
 
     try:
         m_res = supabase.table("lager_material").select("*").order("bezeichnung").execute()
@@ -43,16 +43,17 @@ def render_lager_verwaltung(supabase):
         st.session_state["multibuchung_liste"] = []
 
     tabs = st.tabs([
-        "📊 Bestandsübersicht & Turbo-Suche", 
-        "⚡ Multibuchung & Schnell-Scan", 
-        "🖨️ Etiketten (QR & Barcode)",
+        "📊 Bestandsübersicht", 
+        "⚡ Turbo-Scan & Multibuchung", 
+        "🖨️ Etiketten",
         "➕ Artikel anlegen",
-        "✏️ Artikel bearbeiten / löschen",
+        "✏️ Bearbeiten / Löschen",
         "📋 Inventur",
-        "📥 CSV-Import"
+        "📥 CSV-Import",
+        "📜 Entnahme-Logs"
     ])
 
-    # --- TAB 1: BESTANDSÜBERSICHT & TURBO-SUCHE ---
+    # --- TAB 1: BESTANDSÜBERSICHT ---
     with tabs[0]:
         st.subheader("Aktueller Lagerbestand & Standort-Finder")
 
@@ -97,55 +98,64 @@ def render_lager_verwaltung(supabase):
             else:
                 st.warning("Keine Artikel gefunden.")
 
-    # --- TAB 2: MULTIBUCHUNG & SCHNELL-SCAN (ONE-TAP KAMERA) ---
+    # --- TAB 2: TURBO-SCAN & MULTIBUCHUNG ---
     with tabs[1]:
-        st.subheader("⚡ Multibuchung (One-Tap Kamera-Scan für Mitarbeiter)")
-        st.caption("Einfach auf 'Foto aufnehmen' tippen, QR-Code am Regal fotografieren – der Artikel wird sofort automatisch erkannt!")
+        st.subheader("⚡ Turbo-Scan (Live-Kamera ohne Klicks)")
+        st.caption("Halten Sie die Handykamera auf den QR-Code – der Artikel wird in Millisekunden automatisch erfasst!")
 
         if not material_liste:
             st.warning("Noch keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"], key="buchungs_art_one_tap")
+            # High-Speed Live-Kamera Scanner über URL-Redirect (Superschnell & komplett automatisiert)
+            scanner_html = """
+            <div style="background-color: #f0f2f6; padding: 12px; border-radius: 10px; text-align: center; font-family: sans-serif;">
+                <p style="margin: 0 0 8px 0; font-size: 15px; font-weight: bold; color: #31333F;">📷 Live-Scanner (Sofort-Erkennung)</p>
+                <div id="reader" style="width: 100%; max-width: 320px; margin: auto; border-radius: 8px; overflow: hidden;"></div>
+            </div>
+            <script src="https://unpkg.com/html5-qrcode"></script>
+            <script>
+                let scanningActive = true;
+                function onScanSuccess(decodedText, decodedResult) {
+                    if (scanningActive) {
+                        scanningActive = false;
+                        // Sofortige Weiterleitung löst einen unterbrechungsfreien Rerun in Streamlit aus
+                        window.location.href = window.location.pathname + "?scanned_code=" + encodeURIComponent(decodedText);
+                    }
+                }
+                
+                let html5QrCode = new Html5Qrcode("reader");
+                html5QrCode.start(
+                    { facingMode: "environment" }, 
+                    { fps: 15, qrbox: { width: 220, height: 220 } },
+                    onScanSuccess,
+                    (errorMessage) => {}
+                ).catch(err => {
+                    console.error("Kamera konnte nicht gestartet werden", err);
+                });
+            </script>
+            """
+            components.html(scanner_html, height=360)
 
-            erfasster_code = ""
+            col_s1, col_s2 = st.columns([2, 1])
+            with col_s1:
+                standard_code = st.session_state.pop("auto_scanned_code", "")
+                eingabe_code = st.text_input("🔍 Code scannen oder manuell eingeben", value=standard_code, placeholder="Code wird hier automatisch eingetragen...", key="multiscan_input")
+            with col_s2:
+                buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"])
 
-            # Nativer Streamlit Kamera-Input (funktioniert auf Smartphones absolut reibungslos)
-            foto_input = st.camera_input("📷 QR-Code fotografieren", key="lager_camera_input")
-
-            if foto_input and QR_SCAN_AVAILABLE:
-                try:
-                    file_bytes = np.asarray(bytearray(foto_input.read()), dtype=np.uint8)
-                    opencv_image = cv2.imdecode(file_bytes, 1)
-
-                    # QR-Code Erkennung über OpenCV
-                    retval, decoded_info, points, straight_qrcode = qr_detector.detectAndDecodeMulti(opencv_image)
-                    if retval and decoded_info and decoded_info[0]:
-                        erfasster_code = str(decoded_info[0]).strip()
-                        st.success(f"🎯 **Erkannt! Artikel-Code:** `{erfasster_code}`")
-                    else:
-                        # Fallback Einzel-Erkennung
-                        data, bbox, _ = qr_detector.detectAndDecode(opencv_image)
-                        if data:
-                            erfasster_code = str(data).strip()
-                            st.success(f"🎯 **Erkannt! Artikel-Code:** `{erfasster_code}`")
-                        else:
-                            st.warning("⚠️ Kein QR-Code auf dem Foto erkannt. Bitte halten Sie die Kamera etwas näher an den Code und sorgen Sie für gutes Licht.")
-                except Exception as e:
-                    st.error(f"Fehler bei der Bildverarbeitung: {e}")
-
-            # Manuelle Eingabe als Alternative / Fallback
-            eingabe_manuell = st.text_input("Oder Artikelnummer direkt eintippen", placeholder="Code eingeben...", key="manuell_code_input")
-            if eingabe_manuell:
-                erfasster_code = eingabe_manuell.strip()
-
-            # Artikel in der Liste suchen
             aktueller_treffer = None
-            if erfasster_code:
-                aktueller_treffer = next((m for m in material_liste if str(m.get('artikelnummer', '')).strip().lower() == erfasster_code.lower()), None)
-                if not aktueller_treffer:
-                    st.error(f"⚠️ Der Code '{erfasster_code}' wurde im System nicht gefunden.")
+            if eingabe_code:
+                aktueller_treffer = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(eingabe_code).strip().lower()), None)
+            
+            if not aktueller_treffer and not eingabe_code:
+                such_filter_m = st.text_input("Oder Artikel in Liste suchen", placeholder="z.B. NYM...", key="filter_multi_artikel")
+                passende_m = [m for m in material_liste if such_filter_m.lower() in f"{m.get('bezeichnung')} {m.get('lagerort')} {m.get('artikelnummer')}".lower()] if such_filter_m else []
+                
+                if passende_m:
+                    label_m = st.selectbox("Treffer", options=[f"{m['bezeichnung']} | Ort: {m.get('lagerort')} | Bestand: {m['ist_bestand']}" for m in passende_m])
+                    aktueller_treffer = next((m for m in passende_m if f"{m['bezeichnung']} | Ort: {m.get('lagerort')} | Bestand: {m['ist_bestand']}" == label_m), None)
 
             if aktueller_treffer:
                 st.markdown("---")
@@ -173,7 +183,7 @@ def render_lager_verwaltung(supabase):
                             pass
 
                 with col_i3:
-                    menge_hinzu = st.number_input("Menge", min_value=1, value=1, step=1, key="menge_one_tap_add")
+                    menge_hinzu = st.number_input("Menge", min_value=1, value=1, step=1, key="menge_multi_add")
                     if st.button("➕ In Warenkorb", type="primary", use_container_width=True):
                         st.session_state["multibuchung_liste"].append({
                             "id": aktueller_treffer['id'],
@@ -193,17 +203,18 @@ def render_lager_verwaltung(supabase):
             st.subheader("🛒 Aktuelle Scan-Liste (Warenkorb)")
 
             if not st.session_state["multibuchung_liste"]:
-                st.info("Der Warenkorb ist leer. Machen Sie ein Foto vom QR-Code, um Artikel hinzuzufügen.")
+                st.info("Der Warenkorb ist leer. Scannen Sie Artikel mit der Live-Kamera.")
             else:
                 cart_df = pd.DataFrame(st.session_state["multibuchung_liste"])
                 st.dataframe(cart_df[["bezeichnung", "code", "lagerort", "art", "menge", "einheit"]], use_container_width=True, hide_index=True)
 
-                kommentar_gesamt = st.text_input("Projekt / Baustelle für alle Artikel im Warenkorb", placeholder="z.B. BV Bahnhofstraße", key="kommentar_multibuchung_one_tap")
+                kommentar_gesamt = st.text_input("Projekt / Baustelle für alle Artikel im Warenkorb", placeholder="z.B. BV Bahnhofstraße", key="kommentar_multibuchung")
 
                 col_c1, col_c2 = st.columns(2)
                 with col_c1:
                     if st.button("🚀 Alle Positionen jetzt gesammelt buchen", type="primary", use_container_width=True):
                         try:
+                            current_user = st.session_state.get("user_data", {}).get("name", "Mitarbeiter")
                             for item in st.session_state["multibuchung_liste"]:
                                 alter_b = item["bestand_alt"]
                                 menge_b = item["menge"]
@@ -216,11 +227,12 @@ def render_lager_verwaltung(supabase):
                                     "material_id": item["id"],
                                     "art": "Einbuchung" if ist_zugang else "Ausbuchung",
                                     "menge": menge_b,
+                                    "benutzer": current_user,
                                     "kommentar": kommentar_gesamt or "Multibuchung"
                                 }).execute()
 
                             st.session_state["multibuchung_liste"] = []
-                            st.toast("🎉 Alle Buchungen erfolgreich gespeichert!", icon="🎯")
+                            st.toast("🎉 Alle Buchungen erfolgreich gespeichert & protokolliert!", icon="🎯")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler beim Buchen: {e}")
@@ -230,7 +242,7 @@ def render_lager_verwaltung(supabase):
                         st.session_state["multibuchung_liste"] = []
                         st.rerun()
 
-    # --- TAB 3: ETIKETTEN DRUCKEN (QR & BARCODE) ---
+    # --- TAB 3: ETIKETTEN DRUCKEN ---
     with tabs[2]:
         st.subheader("🖨️ Etiketten für Regale & Kartons drucken")
         if not material_liste:
@@ -431,3 +443,44 @@ def render_lager_verwaltung(supabase):
                     st.rerun()
             except Exception as e:
                 st.error(f"Fehler: {e}")
+
+    # --- TAB 8: ENTNAHME-LOGS (Rollenbasiert) ---
+    with tabs[7]:
+        st.subheader("📜 Historie & Entnahmeprotokoll (Logs)")
+        st.caption("Wer hat wann, wie viel entnommen und für welches Projekt?")
+
+        # Rollenprüfung: Nur Admins, Chefs oder Berechtigte sehen die Logs
+        user_rolle = st.session_state.get("user_data", {}).get("rolle", "")
+        if user_rolle not in ["Admin", "Inhaber", "Chef"] and not hat_recht("2", "bearbeiten"):
+            st.error("⛔ Sie haben keine Berechtigung, das Entnahmeprotokoll einzusehen.")
+        else:
+            try:
+                # Bewegungen abrufen
+                b_res = supabase.table("lager_bewegungen").select("*").order("created_at", desc=True).limit(200).execute()
+                bewegungen = b_res.data or []
+
+                if not bewegungen:
+                    st.info("Noch keine Materialbewegungen aufgezeichnet.")
+                else:
+                    # Material-Mapping für Namen erstellen
+                    mat_map = {m["id"]: m for m in material_liste}
+
+                    log_daten = []
+                    for b in bewegungen:
+                        mat_info = mat_map.get(b.get("material_id"), {})
+                        log_daten.append({
+                            "Zeitpunkt": b.get("created_at", "-"),
+                            "Art": b.get("art", "-"),
+                            "Artikel": mat_info.get("bezeichnung", "Unbekannt"),
+                            "Code": mat_info.get("artikelnummer", "-"),
+                            "Menge": b.get("menge", 0),
+                            "Einheit": mat_info.get("einheit", "Stk."),
+                            "Benutzer": b.get("benutzer", "Unbekannt"),
+                            "Projekt / Kommentar": b.get("kommentar", "-")
+                        })
+
+                    log_df = pd.DataFrame(log_daten)
+                    st.dataframe(log_df, use_container_width=True, hide_index=True)
+                    st.caption(f"Letzte {len(log_df)} Buchungsvorgänge im System.")
+            except Exception as e:
+                st.error(f"Fehler beim Laden der Logs: {e}")

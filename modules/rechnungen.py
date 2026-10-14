@@ -90,7 +90,6 @@ def render_rechnungen_verwaltung(supabase):
     try:
         vorlagen_res = supabase.table("rechnung_vorlagen").select("*").order("bezeichnung").execute()
         vorlagen_liste = vorlagen_res.data or []
-        # Mapping mit str() abgesichert gegen ID-Typkonflikte
         vorlagen_lager_map = {str(v["material_id"]): v for v in vorlagen_liste if v.get("material_id")}
     except Exception:
         vorlagen_liste = []
@@ -248,7 +247,7 @@ def render_rechnungen_verwaltung(supabase):
                         "einzelpreis_netto": 120.0
                     })
 
-                    # 2. Lager- & Fremdmaterialien einfügen mit abgesichertem Preisabgleich
+                    # 2. Lager- & Fremdmaterialien einfügen mit Preisen aus dem Katalog
                     if auftrag_mat:
                         for am in auftrag_mat:
                             if am.get("ist_fremdmaterial"):
@@ -258,7 +257,6 @@ def render_rechnungen_verwaltung(supabase):
                                 mat_id = am.get("material_id")
                                 mat_info = lager_dict.get(mat_id, {})
                                 bez = mat_info.get("bezeichnung", "Lagerartikel")
-                                # Preis über str(mat_id) aus Katalog-Map holen
                                 kat_item = vorlagen_lager_map.get(str(mat_id)) if mat_id else None
                                 preis = float(kat_item["einzelpreis_netto"]) if kat_item else 10.0
                             
@@ -276,75 +274,72 @@ def render_rechnungen_verwaltung(supabase):
         st.markdown("---")
         st.markdown("##### 🛠️ Rechnung bearbeiten, Preise anpassen & finalisieren")
 
-        with st.form("neue_rechnung_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                default_r_nr = f"RE-{datetime.now().strftime('%Y%m%d')}-01"
-                r_nummer = st.text_input("Rechnungsnummer *", value=default_r_nr)
-                r_kunde = st.text_input("Kundenname / Firma *", value=k_name_auto if 'k_name_auto' in locals() else "", placeholder="z. B. Hans Müller")
-            with col2:
-                r_mwst = st.number_input("Mehrwertsteuersatz (%)", min_value=0.0, value=19.0, step=0.5)
+        # 1. AUSWAHL AUS LAGER ODER VORLAGEN (AUßERHALB DES FORMULARS, DAMIT DER PREIS DYNAMISCH AKTUALISIERT WIRD)
+        st.markdown("##### Artikel aus Lager oder Vorlagen hinzufügen")
+        katalog_optionen = [None] + [{"typ": "lager", "item": m} for m in lager_material_liste] + [{"typ": "vorlage", "item": v} for v in vorlagen_liste if not v.get("material_id")]
+        sel_katalog_item = st.selectbox(
+            "Artikel / Vorlage wählen",
+            options=katalog_optionen,
+            format_func=lambda x: "--- Artikel wählen ---" if x is None else (f"[Lager] {x['item']['bezeichnung']} (Bestand: {x['item']['ist_bestand']} {x['item'].get('einheit', 'Stk.')})" if x['typ'] == 'lager' else f"[Vorlage] {x['item']['bezeichnung']} ({float(x['item']['einzelpreis_netto']):.2f} EUR)")
+        )
 
-            st.markdown("##### Artikel aus Lager oder Vorlagen hinzufügen")
-            
-            katalog_optionen = [None] + [{"typ": "lager", "item": m} for m in lager_material_liste] + [{"typ": "vorlage", "item": v} for v in vorlagen_liste if not v.get("material_id")]
-            sel_katalog_item = st.selectbox(
-                "Artikel / Vorlage wählen",
-                options=katalog_optionen,
-                format_func=lambda x: "--- Artikel wählen ---" if x is None else (f"[Lager] {x['item']['bezeichnung']} (Bestand: {x['item']['ist_bestand']} {x['item'].get('einheit', 'Stk.')})" if x['typ'] == 'lager' else f"[Vorlage] {x['item']['bezeichnung']} ({float(x['item']['einzelpreis_netto']):.2f} EUR)")
-            )
+        # Automatischen Standardpreis aus dem Preiskatalog ermitteln
+        default_preset_preis = 10.0
+        if sel_katalog_item:
+            item_data = sel_katalog_item["item"]
+            if sel_katalog_item["typ"] == "lager":
+                kat_match = vorlagen_lager_map.get(str(item_data.get("id")))
+                default_preset_preis = float(kat_match["einzelpreis_netto"]) if kat_match else 10.0
+            else:
+                default_preset_preis = float(item_data["einzelpreis_netto"])
 
-            default_preset_preis = 10.0
-            if sel_katalog_item:
-                item_data = sel_katalog_item["item"]
-                if sel_katalog_item["typ"] == "lager":
-                    kat_match = vorlagen_lager_map.get(str(item_data.get("id")))
-                    default_preset_preis = float(kat_match["einzelpreis_netto"]) if kat_match else 10.0
-                else:
-                    default_preset_preis = float(item_data["einzelpreis_netto"])
-
-            col_kat1, col_kat2, col_kat3 = st.columns(3)
-            with col_kat1:
-                kat_menge = st.number_input("Menge", min_value=0.1, value=1.0, step=0.5)
-            with col_kat2:
-                kat_preis_netto = st.number_input("Einzelpreis netto (EUR)", min_value=0.0, value=float(default_preset_preis), step=5.0)
-            with col_kat3:
-                st.write("")
-                st.write("")
-                btn_kat_add = st.form_submit_button("➕ Position hinzufügen", use_container_width=True)
-
-            if btn_kat_add and sel_katalog_item:
-                item_data = sel_katalog_item["item"]
-                bez = item_data["bezeichnung"]
-
-                st.session_state["rechnung_positionen_temp"].append({
-                    "beschreibung": bez,
-                    "menge": kat_menge,
-                    "einzelpreis_netto": kat_preis_netto
-                })
-                st.rerun()
-
-            st.markdown("---")
-            st.markdown("##### Freie Position hinzufügen")
-            p_beschr = st.text_input("Positionsbeschreibung", placeholder="z.B. Monteurstunde / Sonderarbeit")
-            col_p1, col_p2 = st.columns(2)
-            with col_p1:
-                p_menge = st.number_input("Menge / Stunden", min_value=0.1, value=1.0, step=0.5, key="p_menge_neu")
-            with col_p2:
-                p_preis = st.number_input("Einzelpreis netto (EUR)", min_value=0.0, value=65.0, step=5.0, key="p_preis_neu")
-
-            btn_add_pos = st.form_submit_button("➕ Freie Position hinzufügen", use_container_width=True)
-            if btn_add_pos:
-                if p_beschr.strip():
+        col_kat1, col_kat2, col_kat3 = st.columns(3)
+        with col_kat1:
+            kat_menge = st.number_input("Menge", min_value=0.1, value=1.0, step=0.5, key="kat_menge_inp")
+        with col_kat2:
+            kat_preis_netto = st.number_input("Einzelpreis netto (EUR)", min_value=0.0, value=float(default_preset_preis), step=5.0, key="kat_preis_inp")
+        with col_kat3:
+            st.write("")
+            st.write("")
+            if st.button("➕ Artikel hinzufügen", use_container_width=True):
+                if sel_katalog_item:
+                    item_data = sel_katalog_item["item"]
+                    bez = item_data["bezeichnung"]
                     st.session_state["rechnung_positionen_temp"].append({
-                        "beschreibung": p_beschr.strip(),
-                        "menge": p_menge,
-                        "einzelpreis_netto": p_preis
+                        "beschreibung": bez,
+                        "menge": kat_menge,
+                        "einzelpreis_netto": kat_preis_netto
                     })
+                    st.success(f"'{bez}' hinzugefügt!")
                     st.rerun()
+                else:
+                    st.warning("Bitte wählen Sie zuerst einen Artikel aus.")
 
-            submitted_rechnung = st.form_submit_button("💾 Rechnung speichern & ausstellen", type="primary", use_container_width=True)
+        st.markdown("---")
+        st.markdown("##### Freie Position hinzufügen")
+        col_p1, col_p2, col_p3 = st.columns([3, 1, 1])
+        with col_p1:
+            p_beschr = st.text_input("Positionsbeschreibung", placeholder="z.B. Monteurstunde / Sonderarbeit", key="frei_beschr_inp")
+        with col_p2:
+            p_menge = st.number_input("Menge / Std.", min_value=0.1, value=1.0, step=0.5, key="frei_menge_inp")
+        with col_p3:
+            p_preis = st.number_input("Netto-Preis (€)", min_value=0.0, value=65.0, step=5.0, key="frei_preis_inp")
 
+        if st.button("➕ Freie Position hinzufügen", use_container_width=True):
+            if p_beschr.strip():
+                st.session_state["rechnung_positionen_temp"].append({
+                    "beschreibung": p_beschr.strip(),
+                    "menge": p_menge,
+                    "einzelpreis_netto": p_preis
+                })
+                st.success("Freie Position hinzugefügt!")
+                st.rerun()
+            else:
+                st.warning("Bitte eine Positionsbeschreibung angeben.")
+
+        st.markdown("---")
+
+        # 2. AKTUELL HINZUGEFÜGTE POSITIONEN ANZEIGEN
         if st.session_state["rechnung_positionen_temp"]:
             st.markdown("##### 📋 Aktuelle Rechnungspositionen:")
             
@@ -364,39 +359,56 @@ def render_rechnungen_verwaltung(supabase):
             if st.button("🗑️ Alle Positionen löschen"):
                 st.session_state["rechnung_positionen_temp"] = []
                 st.rerun()
+        else:
+            st.info("Noch keine Positionen für diese Rechnung hinzugefügt.")
 
-        if submitted_rechnung:
-            if not r_nummer.strip() or not r_kunde.strip():
-                st.warning("Bitte Rechnungsnummer und Kundenname angeben.")
-            elif not st.session_state["rechnung_positionen_temp"]:
-                st.warning("Bitte fügen Sie mindestens eine Position hinzu.")
-            else:
-                try:
-                    r_payload = {
-                        "rechnungsnummer": r_nummer.strip(),
-                        "auftrag_id": ausgewaehlter_auftrag["id"] if 'ausgewaehlter_auftrag' in locals() and ausgewaehlter_auftrag else None,
-                        "kunde_name": r_kunde.strip(),
-                        "mwst_satz": r_mwst,
-                        "status": "Offen"
-                    }
-                    res = supabase.table("rechnungen").insert(r_payload).execute()
+        st.markdown("---")
 
-                    if res.data:
-                        rech_id = res.data[0]["id"]
-                        pos_inserts = [{
-                            "rechnung_id": rech_id,
-                            "beschreibung": p["beschreibung"],
-                            "menge": p["menge"],
-                            "einzelpreis_netto": p["einzelpreis_netto"]
-                        } for p in st.session_state["rechnung_positionen_temp"]]
+        # 3. FINAL FORM FÜR RECHNUNGSDATEN UND SPEICHERN
+        with st.form("neue_rechnung_form"):
+            st.markdown("##### 💾 Rechnung finalisieren & speichern")
+            col1, col2 = st.columns(2)
+            with col1:
+                default_r_nr = f"RE-{datetime.now().strftime('%Y%m%d')}-01"
+                r_nummer = st.text_input("Rechnungsnummer *", value=default_r_nr)
+                r_kunde = st.text_input("Kundenname / Firma *", value=k_name_auto if 'k_name_auto' in locals() else "", placeholder="z. B. Hans Müller")
+            with col2:
+                r_mwst = st.number_input("Mehrwertsteuersatz (%)", min_value=0.0, value=19.0, step=0.5)
 
-                        supabase.table("rechnungspositionen").insert(pos_inserts).execute()
+            submitted_rechnung = st.form_submit_button("💾 Rechnung speichern & ausstellen", type="primary", use_container_width=True)
 
-                    st.session_state["rechnung_positionen_temp"] = []
-                    st.success(f"Rechnung {r_nummer} erfolgreich erstellt!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Fehler beim Speichern der Rechnung: {e}")
+            if submitted_rechnung:
+                if not r_nummer.strip() or not r_kunde.strip():
+                    st.warning("Bitte Rechnungsnummer und Kundenname angeben.")
+                elif not st.session_state["rechnung_positionen_temp"]:
+                    st.warning("Bitte fügen Sie mindestens eine Position hinzu.")
+                else:
+                    try:
+                        r_payload = {
+                            "rechnungsnummer": r_nummer.strip(),
+                            "auftrag_id": ausgewaehlter_auftrag["id"] if 'ausgewaehlter_auftrag' in locals() and ausgewaehlter_auftrag else None,
+                            "kunde_name": r_kunde.strip(),
+                            "mwst_satz": r_mwst,
+                            "status": "Offen"
+                        }
+                        res = supabase.table("rechnungen").insert(r_payload).execute()
+
+                        if res.data:
+                            rech_id = res.data[0]["id"]
+                            pos_inserts = [{
+                                "rechnung_id": rech_id,
+                                "beschreibung": p["beschreibung"],
+                                "menge": p["menge"],
+                                "einzelpreis_netto": p["einzelpreis_netto"]
+                            } for p in st.session_state["rechnung_positionen_temp"]]
+
+                            supabase.table("rechnungspositionen").insert(pos_inserts).execute()
+
+                        st.session_state["rechnung_positionen_temp"] = []
+                        st.success(f"Rechnung {r_nummer} erfolgreich erstellt!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler beim Speichern der Rechnung: {e}")
 
     # =========================================================================
     # TAB 3: ZENTRALER PREISKATALOG (VOLLSTÄNDIGE LAGER- & VORLAGEN-PFLEGE)

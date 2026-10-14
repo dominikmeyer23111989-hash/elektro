@@ -19,7 +19,6 @@ def decodiere_qr_aus_bild(opencv_image):
     if not QR_SCAN_AVAILABLE or opencv_image is None:
         return ""
     try:
-        # 1. Zu Graustufen konvertieren
         gray = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2GRAY)
         
         # Direktversuch
@@ -27,14 +26,14 @@ def decodiere_qr_aus_bild(opencv_image):
         if data:
             return str(data).strip()
 
-        # 2. Kontrastverstärkung (gegen schlechtes Licht / Schatten)
+        # Kontrastverstärkung (gegen schlechtes Licht / Schatten)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
         data, _, _ = qr_detector.detectAndDecode(enhanced)
         if data:
             return str(data).strip()
 
-        # 3. Skalierungstest (falls zu nah oder zu weit weg)
+        # Skalierungstest
         for scale in [0.5, 1.5, 2.0]:
             resized = cv2.resize(gray, (0, 0), fx=scale, fy=scale)
             data, _, _ = qr_detector.detectAndDecode(resized)
@@ -71,6 +70,12 @@ def render_lager_verwaltung(supabase):
 
     if "multibuchung_liste" not in st.session_state:
         st.session_state["multibuchung_liste"] = []
+
+    # Session States für den Kamera-Scanner initialisieren, damit Mengen stabil bleiben
+    if "last_foto_id" not in st.session_state:
+        st.session_state["last_foto_id"] = None
+    if "current_scanned_code" not in st.session_state:
+        st.session_state["current_scanned_code"] = ""
 
     tabs = st.tabs([
         "📊 Bestandsübersicht", 
@@ -131,7 +136,7 @@ def render_lager_verwaltung(supabase):
     # --- TAB 2: TURBO-SCAN & MULTIBUCHUNG ---
     with tabs[1]:
         st.subheader("⚡ Turbo-Scan & Multibuchung")
-        st.caption("Machen Sie ein Foto vom QR-Code – dank integrierter Bildoptimierung wird der Code blitzschnell erkannt!")
+        st.caption("Machen Sie ein Foto vom QR-Code – der Artikel wird automatisch erkannt und die Menge bleibt stabil!")
 
         if not material_liste:
             st.warning("Noch keine Artikel im Lager vorhanden.")
@@ -140,30 +145,37 @@ def render_lager_verwaltung(supabase):
         else:
             buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"], key="buchungs_art_one_tap")
 
-            erfasster_code = ""
-
-            # Nativer Kamera-Input mit optimierter Erkennung
+            # Nativer Kamera-Input mit Loop-Schutz
             foto_input = st.camera_input("📷 QR-Code fotografieren", key="lager_camera_input")
 
-            if foto_input and QR_SCAN_AVAILABLE:
-                try:
-                    file_bytes = np.asarray(bytearray(foto_input.read()), dtype=np.uint8)
-                    opencv_image = cv2.imdecode(file_bytes, 1)
-                    erfasster_code = decodiere_qr_aus_bild(opencv_image)
-                    
-                    if erfasster_code:
-                        st.success(f"🎯 **Erfolgreich erkannt! Code:** `{erfasster_code}`")
-                    else:
-                        st.warning("⚠️ QR-Code auf dem Foto nicht eindeutig erkannt. Bitte achten Sie auf gutes Licht oder nutzen Sie die Artikelsuche unten.")
-                except Exception as e:
-                    st.error(f"Fehler bei der Bildverarbeitung: {e}")
+            if foto_input:
+                foto_id = getattr(foto_input, "file_id", None) or hash(foto_input.getvalue())
+                if foto_id != st.session_state["last_foto_id"]:
+                    st.session_state["last_foto_id"] = foto_id
+                    if QR_SCAN_AVAILABLE:
+                        try:
+                            file_bytes = np.asarray(bytearray(foto_input.read()), dtype=np.uint8)
+                            opencv_image = cv2.imdecode(file_bytes, 1)
+                            code_erfasst = decodiere_qr_aus_bild(opencv_image)
+                            
+                            if code_erfasst:
+                                st.session_state["current_scanned_code"] = code_erfasst
+                                st.success(f"🎯 **Erfolgreich erkannt! Code:** `{code_erfasst}`")
+                            else:
+                                st.warning("⚠️ QR-Code auf dem Foto nicht eindeutig erkannt. Bitte nutzen Sie die Artikelsuche unten.")
+                        except Exception as e:
+                            st.error(f"Fehler bei der Bildverarbeitung: {e}")
 
-            # Eingabefeld (wählt automatisch den erfassten Code oder manuelle Eingabe)
+            # Eingabefeld gekoppelt mit dem Scan-Ergebnis
             col_s1, col_s2 = st.columns([2, 1])
             with col_s1:
-                eingabe_code = st.text_input("🔍 Artikelnummer / Code", value=erfasster_code, placeholder="Wird automatisch gefüllt...", key="multiscan_input")
+                default_code = st.session_state.get("current_scanned_code", "")
+                eingabe_code = st.text_input("🔍 Artikelnummer / Code", value=default_code, placeholder="Wird automatisch gefüllt oder eingetippt...", key="multiscan_input")
             with col_s2:
-                st.write("")
+                if st.button("🔄 Scanner zurücksetzen", use_container_width=True):
+                    st.session_state["current_scanned_code"] = ""
+                    st.session_state["last_foto_id"] = None
+                    st.rerun()
 
             aktueller_treffer = None
             if eingabe_code:
@@ -247,15 +259,18 @@ def render_lager_verwaltung(supabase):
 
                                 supabase.table("lager_material").update({"ist_bestand": neuer_b}).eq("id", item["id"]).execute()
                                 
+                                # Beides übergeben (menge und anzahl), damit Supabase-Spalten unabhängig vom Namen bedient werden
                                 supabase.table("lager_bewegungen").insert({
                                     "material_id": item["id"],
                                     "art": "Einbuchung" if ist_zugang else "Ausbuchung",
                                     "menge": menge_b,
+                                    "anzahl": menge_b,
                                     "benutzer": current_user,
                                     "kommentar": projekt_text
                                 }).execute()
 
                             st.session_state["multibuchung_liste"] = []
+                            st.session_state["current_scanned_code"] = ""
                             st.toast("🎉 Alle Buchungen erfolgreich gespeichert & protokolliert!", icon="🎯")
                             st.rerun()
                         except Exception as e:
@@ -489,11 +504,14 @@ def render_lager_verwaltung(supabase):
                     log_daten = []
                     for b in bewegungen:
                         mat_info = mat_map.get(b.get("material_id"), {})
+                        # Menge robust auslesen (unterstützt 'menge' und 'anzahl')
+                        m_val = b.get("menge") if b.get("menge") is not None else b.get("anzahl", 0)
+                        
                         log_daten.append({
                             "Art": b.get("art", "-"),
                             "Artikel": mat_info.get("bezeichnung", "Unbekannt"),
                             "Code": mat_info.get("artikelnummer", "-"),
-                            "Menge": b.get("menge", 0),
+                            "Menge": m_val,
                             "Einheit": mat_info.get("einheit", "Stk."),
                             "Benutzer": b.get("benutzer", "Unbekannt"),
                             "Projekt / Baustelle": b.get("kommentar", "-")

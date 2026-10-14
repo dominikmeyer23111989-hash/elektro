@@ -4,6 +4,9 @@ import pandas as pd
 from fpdf import FPDF
 from zoneinfo import ZoneInfo
 from io import BytesIO
+import base64
+import tempfile
+import os
 
 class RechnungsPDF(FPDF):
     def header(self):
@@ -23,7 +26,27 @@ def clean_text(text):
         return "-"
     return str(text).encode('latin-1', 'replace').decode('latin-1')
 
-def generate_rechnung_pdf(rechnung, positionen):
+def add_signature_to_pdf(pdf, sig_base64, label):
+    if not sig_base64:
+        return
+    try:
+        sig_str = str(sig_base64)
+        if "," in sig_str:
+            sig_str = sig_str.split(",")[1]
+        img_data = base64.b64decode(sig_str)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            tmp.write(img_data)
+            tmp_path = tmp.name
+        
+        pdf.ln(3)
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.cell(0, 5, clean_text(label), new_x="LMARGIN", new_y="NEXT")
+        pdf.image(tmp_path, w=45)
+        os.unlink(tmp_path)
+    except Exception:
+        pass
+
+def generate_rechnung_pdf(rechnung, positionen, auftrag_rec=None):
     pdf = RechnungsPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     pdf.set_font('Helvetica', '', 11)
@@ -74,11 +97,31 @@ def generate_rechnung_pdf(rechnung, positionen):
     pdf.cell(150, 8, "Gesamtauftragssumme (Brutto):", align='R')
     pdf.cell(40, 8, f"{brutto_summe:.2f} EUR", align='R', new_x="LMARGIN", new_y="NEXT")
 
+    # Auftragsdetails & Unterschriften im PDF einbetten, falls verknüpft
+    if auftrag_rec:
+        pdf.ln(8)
+        pdf.set_font('Helvetica', 'B', 10)
+        pdf.cell(0, 6, clean_text(f"Auftragsreferenz: #{auftrag_rec.get('auftragsnummer', '-')"), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font('Helvetica', '', 9)
+        pdf.multi_cell(0, 5, clean_text(f"Arbeitsbericht: {auftrag_rec.get('arbeiten', '-')}"))
+        
+        kunde_sig = auftrag_rec.get('kunde_unterschrift')
+        ma_sig = auftrag_rec.get('mitarbeiter_unterschrift')
+        
+        if kunde_sig or ma_sig:
+            pdf.ln(4)
+            pdf.set_font('Helvetica', 'B', 9)
+            pdf.cell(0, 5, clean_text("Abnahmeprotokoll & Unterschriften:"), new_x="LMARGIN", new_y="NEXT")
+            if kunde_sig:
+                add_signature_to_pdf(pdf, kunde_sig, "Unterschrift Kunde (Abnahme):")
+            if ma_sig:
+                add_signature_to_pdf(pdf, ma_sig, "Unterschrift Monteur (Ausführung):")
+
     return pdf.output()
 
 def render_rechnungen_verwaltung(supabase):
     st.title("💶 11. Rechnungs- & Abrechnungsmodul")
-    st.caption("Verwalten Sie den zentralen Preiskatalog, rechnen Sie Aufträge ab und exportieren Sie Rechnungen als PDF.")
+    st.caption("Verwalten Sie den zentralen Preiskatalog, rechnen Sie Aufträge transparent ab und exportieren Sie professionelle Rechnungs-PDFs.")
 
     # 1. Daten robust laden
     try:
@@ -118,7 +161,7 @@ def render_rechnungen_verwaltung(supabase):
 
     tabs = st.tabs([
         "📄 Rechnungsübersicht & Filter", 
-        "🚀 Aufträge & Lager abrechnen", 
+        "🚀 Aufträge transparent abrechnen", 
         "⚙️ Zentraler Preiskatalog"
     ])
 
@@ -156,6 +199,16 @@ def render_rechnungen_verwaltung(supabase):
                 except Exception:
                     positionen = []
 
+                # Zugehörigen Auftrag laden, falls vorhanden
+                auftrag_rec = None
+                if r.get("auftrag_id"):
+                    try:
+                        a_match = supabase.table("auftraege").select("*").eq("id", r["auftrag_id"]).execute()
+                        if a_match.data:
+                            auftrag_rec = a_match.data[0]
+                    except Exception:
+                        pass
+
                 netto = sum(float(p.get("menge", 1)) * float(p.get("einzelpreis_netto", 0)) for p in positionen)
                 mwst = netto * (float(r.get("mwst_satz", 19.0)) / 100.0)
                 brutto = netto + mwst
@@ -191,7 +244,7 @@ def render_rechnungen_verwaltung(supabase):
                     st.markdown(f"**Summe Netto:** {netto:.2f} EUR | **MwSt.:** {mwst:.2f} EUR | **Gesamt Brutto:** **{brutto:.2f} EUR**")
                     
                     st.markdown("---")
-                    pdf_bytes = generate_rechnung_pdf(r, positionen)
+                    pdf_bytes = generate_rechnung_pdf(r, positionen, auftrag_rec)
                     st.download_button(
                         label=f"📥 Rechnungs-PDF herunterladen ({r.get('rechnungsnummer')})",
                         data=bytes(pdf_bytes),
@@ -201,11 +254,11 @@ def render_rechnungen_verwaltung(supabase):
                     )
 
     # =========================================================================
-    # TAB 2: AUFTRÄGE & LAGER ABRECHNEN
+    # TAB 2: TRANSPARENTE AUFTRAGSABRECHNUNG
     # =========================================================================
     with tabs[1]:
-        st.subheader("Auftrag & Lager-Material in Rechnung übernehmen")
-        st.caption("Wählen Sie einen Auftrag aus. Die App übernimmt den Arbeitsbericht und zieht automatisch die im Preiskatalog hinterlegten Verkaufspreise.")
+        st.subheader("Auftrag & Lager-Material transparent abrechnen")
+        st.caption("Wählen Sie einen Auftrag aus. Die App zeigt Ihnen exakt an, welche Arbeitsleistungen, Materialien und Unterschriften vorliegen.")
 
         if "rechnung_positionen_temp" not in st.session_state:
             st.session_state["rechnung_positionen_temp"] = []
@@ -227,17 +280,54 @@ def render_rechnungen_verwaltung(supabase):
             if ausgewaehlter_auftrag:
                 k_name_auto = kunden_dict.get(ausgewaehlter_auftrag.get("kunde_id"), "") or ausgewaehlter_auftrag.get("freitext_kunde", "Kunde")
 
-                st.success(f"Auftrag {ausgewaehlter_auftrag.get('auftragsnummer')} (Status: {ausgewaehlter_auftrag.get('status')}) für Kunde **{k_name_auto}** ausgewählt.")
-                st.write(f"📝 **Arbeitsbericht:** {ausgewaehlter_auftrag.get('arbeiten', '-')}")
+                # Transparente Info-Box mit allen Auftragsdetails
+                with st.container(border=True):
+                    st.markdown(f"#### 🔍 Auftragsdetails: #{ausgewaehlter_auftrag.get('auftragsnummer')}")
+                    c_inf1, c_inf2 = st.columns(2)
+                    with c_inf1:
+                        st.write(f"**Kunde:** {k_name_auto}")
+                        st.write(f"**Status:** {ausgewaehlter_auftrag.get('status')}")
+                    with c_inf2:
+                        has_k_sig = bool(ausgewaehlter_auftrag.get('kunde_unterschrift'))
+                        has_m_sig = bool(ausgewaehlter_auftrag.get('mitarbeiter_unterschrift'))
+                        st.write(f"**Unterschrift Kunde:** {'✅ Vorhanden' if has_k_sig else '❌ Fehlt'}")
+                        st.write(f"**Unterschrift Monteur:** {'✅ Vorhanden' if has_m_sig else '❌ Fehlt'}")
 
-                try:
-                    am_res = supabase.table("auftrag_material").select("*").eq("auftrag_id", ausgewaehlter_auftrag["id"]).execute()
-                    auftrag_mat = am_res.data or []
-                except Exception as e:
-                    auftrag_mat = []
-                    st.warning(f"Konnte Lager-Material nicht laden: {e}")
+                    st.markdown(f"**📝 Arbeitsbericht:**\n> {ausgewaehlter_auftrag.get('arbeiten', '-')}")
 
-                if st.button("📥 Arbeitsbericht & verknüpftes Lager-Material laden", type="primary"):
+                    # Verbrauchte Lagerartikel für diese Vorschau laden
+                    try:
+                        am_res = supabase.table("auftrag_material").select("*").eq("auftrag_id", ausgewaehlter_auftrag["id"]).execute()
+                        auftrag_mat = am_res.data or []
+                    except Exception:
+                        auftrag_mat = []
+
+                    if auftrag_mat:
+                        st.markdown("**📦 Im Auftrag erfasste Materialpositionen:**")
+                        mat_preview_list = []
+                        for am in auftrag_mat:
+                            if am.get("ist_fremdmaterial"):
+                                bez = am.get("freitext_bezeichnung", "Fremdteil")
+                                preis = 15.0
+                            else:
+                                mat_id = am.get("material_id")
+                                mat_info = lager_dict.get(mat_id, {})
+                                bez = mat_info.get("bezeichnung", "Lagerartikel")
+                                kat_item = vorlagen_lager_map.get(str(mat_id)) if mat_id else None
+                                preis = float(kat_item["einzelpreis_netto"]) if kat_item else 10.0
+                            
+                            menge = float(am.get("menge", 1))
+                            mat_preview_list.append({
+                                "Material": bez,
+                                "Menge": menge,
+                                "Katalog-Preis (Netto)": f"{preis:.2f} €",
+                                "Gesamt (Netto)": f"{menge * preis:.2f} €"
+                            })
+                        st.dataframe(pd.DataFrame(mat_preview_list), use_container_width=True, hide_index=True)
+                    else:
+                        st.info("ℹ️ Keine Lager-Materialien direkt an diesen Auftrag gekoppelt.")
+
+                if st.button("📥 Obige Auftragsdaten & Material in Rechnungspositionen übernehmen", type="primary"):
                     st.session_state["rechnung_positionen_temp"] = []
                     
                     # 1. Arbeitsbericht als Position
@@ -247,7 +337,7 @@ def render_rechnungen_verwaltung(supabase):
                         "einzelpreis_netto": 120.0
                     })
 
-                    # 2. Lager- & Fremdmaterialien einfügen mit Preisen aus dem Katalog
+                    # 2. Materialpositionen übernehmen
                     if auftrag_mat:
                         for am in auftrag_mat:
                             if am.get("ist_fremdmaterial"):
@@ -265,17 +355,14 @@ def render_rechnungen_verwaltung(supabase):
                                 "menge": float(am.get("menge", 1)),
                                 "einzelpreis_netto": preis
                             })
-                        st.success(f"{len(auftrag_mat)} Material-Position(en) mit Katalog-Preisen übernommen!")
-                    else:
-                        st.info("Dieser Auftrag hat keine verknüpften Lager-Materialien in 'auftrag_material'.")
-                    
+                    st.success("Auftrag erfolgreich in die Rechnungspositionen übernommen!")
                     st.rerun()
 
         st.markdown("---")
-        st.markdown("##### 🛠️ Rechnung bearbeiten, Preise anpassen & finalisieren")
+        st.markdown("##### 🛠️ Rechnung bearbeiten & finalisieren")
 
-        # 1. AUSWAHL AUS LAGER ODER VORLAGEN (OHNE MANUELLES PREIS-EINGABEFELD, NUTZT IMMER DEN KATALOG-PREIS)
-        st.markdown("##### Artikel aus Lager oder Vorlagen hinzufügen (Preise werden automatisch aus dem Preiskatalog übernommen)")
+        # Artikel manuell aus Katalog hinzufügen
+        st.markdown("##### Zusätzlichen Artikel aus Lager oder Vorlagen hinzufügen")
         katalog_optionen = [None] + [{"typ": "lager", "item": m} for m in lager_material_liste] + [{"typ": "vorlage", "item": v} for v in vorlagen_liste if not v.get("material_id")]
         sel_katalog_item = st.selectbox(
             "Artikel / Vorlage wählen",
@@ -283,7 +370,6 @@ def render_rechnungen_verwaltung(supabase):
             format_func=lambda x: "--- Artikel wählen ---" if x is None else (f"[Lager] {x['item']['bezeichnung']} (Bestand: {x['item']['ist_bestand']} {x['item'].get('einheit', 'Stk.')})" if x['typ'] == 'lager' else f"[Vorlage] {x['item']['bezeichnung']} ({float(x['item']['einzelpreis_netto']):.2f} EUR)")
         )
 
-        # Automatischen Standardpreis und Bezeichnung ermitteln
         auto_preis = 0.0
         if sel_katalog_item:
             item_data = sel_katalog_item["item"]
@@ -293,7 +379,7 @@ def render_rechnungen_verwaltung(supabase):
             else:
                 auto_preis = float(item_data["einzelpreis_netto"])
             
-            st.info(f"💡 Hinterlegter Katalogpreis für diesen Artikel: **{auto_preis:.2f} € netto**")
+            st.info(f"💡 Hinterlegter Katalogpreis: **{auto_preis:.2f} € netto**")
 
         col_kat1, col_kat2 = st.columns([2, 1])
         with col_kat1:
@@ -310,7 +396,7 @@ def render_rechnungen_verwaltung(supabase):
                         "menge": kat_menge,
                         "einzelpreis_netto": auto_preis
                     })
-                    st.success(f"'{bez}' (á {auto_preis:.2f} €) hinzugefügt!")
+                    st.success(f"'{bez}' hinzugefügt!")
                     st.rerun()
                 else:
                     st.warning("Bitte wählen Sie zuerst einen Artikel aus.")
@@ -339,7 +425,7 @@ def render_rechnungen_verwaltung(supabase):
 
         st.markdown("---")
 
-        # 2. AKTUELL HINZUGEFÜGTE POSITIONEN ANZEIGEN
+        # Aktuelle Positionen
         if st.session_state["rechnung_positionen_temp"]:
             st.markdown("##### 📋 Aktuelle Rechnungspositionen:")
             
@@ -360,11 +446,11 @@ def render_rechnungen_verwaltung(supabase):
                 st.session_state["rechnung_positionen_temp"] = []
                 st.rerun()
         else:
-            st.info("Noch keine Positionen für diese Rechnung hinzugefügt.")
+            st.info("Noch keine Positionen hinzugefügt.")
 
         st.markdown("---")
 
-        # 3. FINAL FORM FÜR RECHNUNGSDATEN UND SPEICHERN
+        # Speichern Form
         with st.form("neue_rechnung_form"):
             st.markdown("##### 💾 Rechnung finalisieren & speichern")
             col1, col2 = st.columns(2)
@@ -411,19 +497,16 @@ def render_rechnungen_verwaltung(supabase):
                         st.error(f"Fehler beim Speichern der Rechnung: {e}")
 
     # =========================================================================
-    # TAB 3: ZENTRALER PREISKATALOG (VOLLSTÄNDIGE LAGER- & VORLAGEN-PFLEGE)
+    # TAB 3: ZENTRALER PREISKATALOG
     # =========================================================================
     with tabs[2]:
         st.subheader("⚙️ Zentraler Preiskatalog & Stammdaten")
-        st.caption("Legen Sie hier alle Verkaufspreise fest. Sie können jedem Lagerartikel direkt einen festen Verkaufspreis zuweisen oder allgemeine Leistungen (Stunden, Pauschalen) verwalten.")
+        st.caption("Legen Sie hier alle Verkaufspreise fest.")
 
-        tab_kat_lager, tab_kat_allg = st.tabs(["📦 Lager-Artikel Preise", "📋 Allgemeine Vorlagen (Stunden, Pauschalen)"])
+        tab_kat_lager, tab_kat_allg = st.tabs(["📦 Lager-Artikel Preise", "📋 Allgemeine Vorlagen"])
 
-        # --- SUB-TAB 1: LAGER-ARTIKEL PREISE DIREKT PFLEGEN ---
         with tab_kat_lager:
             st.markdown("##### Feste Verkaufspreise für Ihre Lagerartikel definieren")
-            st.caption("Hier sehen Sie alle Artikel aus Ihrem Lager. Tragen Sie den gewünschten Netto-Verkaufspreis ein und speichern Sie ihn ab.")
-
             if not lager_material_liste:
                 st.info("Keine Artikel im Lager vorhanden.")
             else:
@@ -471,12 +554,10 @@ def render_rechnungen_verwaltung(supabase):
                             except Exception as e:
                                 st.error(f"Fehler: {e}")
 
-        # --- SUB-TAB 2: ALLGEMEINE VORLAGEN (STUNDEN, PAUSCHALEN) ---
         with tab_kat_allg:
-            st.markdown("##### Allgemeine Leistungsvorlagen (Arbeitszeit, Fahrtkosten, Pauschalen)")
-
+            st.markdown("##### Allgemeine Leistungsvorlagen (Arbeitszeit, Fahrtkosten)")
             with st.form("neue_vorlage_form"):
-                v_bech_frei = st.text_input("Bezeichnung *", placeholder="z. B. Monteurstunde Standard oder Anfahrtspauschale")
+                v_bech_frei = st.text_input("Bezeichnung *", placeholder="z. B. Monteurstunde Standard")
                 col_v1, col_v2, col_v3 = st.columns(3)
                 with col_v1:
                     v_kat = st.selectbox("Kategorie", ["Arbeitszeit", "Pauschale", "Sonstiges"])

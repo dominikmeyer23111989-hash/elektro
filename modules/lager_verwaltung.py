@@ -544,7 +544,6 @@ def render_lager_verwaltung(supabase):
             with st.form("inventur_form"):
                 inventur_daten = {}
                 
-                # Tabellenkopf
                 h1, h2, h3, h4 = st.columns([2, 1, 1, 2])
                 with h1:
                     st.markdown("**Artikel & Ort**")
@@ -583,7 +582,6 @@ def render_lager_verwaltung(supabase):
                         inventur_kommentar = f"Benutzer: {current_user} | Inventur durchgeführt am {heute_datum}"
 
                         for mat_id, neuer_ist in inventur_daten.items():
-                            # Aktualisiert ausschließlich den Ist-Bestand, das Soll bleibt unangetastet!
                             supabase.table("lager_material").update({"ist_bestand": neuer_ist}).eq("id", mat_id).execute()
                             
                             supabase.table("lager_bewegungen").insert({
@@ -598,16 +596,17 @@ def render_lager_verwaltung(supabase):
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
-            # PDF-Export für die Inventurliste
+            # PDF-Export für die Inventurliste (mit den live eingegebenen Werten)
             st.markdown("---")
             for m in material_liste:
+                gezahlt_wert = st.session_state.get(f"inv_{m['id']}", m.get('ist_bestand', 0))
                 inventur_pdf_daten.append([
                     str(m.get('artikelnummer', '-')),
                     str(m.get('bezeichnung', '')),
                     str(m.get('lagerort', '-')),
                     f"{m.get('ist_bestand', 0)} {m.get('einheit', 'Stk.')}",
                     f"{m.get('soll_bestand', 0)} {m.get('einheit', 'Stk.')}",
-                    "_______"
+                    f"{gezahlt_wert} {m.get('einheit', 'Stk.')}"
                 ])
 
             col_inv_exp1, col_inv_exp2 = st.columns(2)
@@ -615,7 +614,7 @@ def render_lager_verwaltung(supabase):
                 if PDF_EXPORT_AVAILABLE:
                     inv_pdf_bytes = generiere_pdf_bericht(
                         f"Inventur-Zählliste (Letzte Inventur: {letzte_inventur_datum})",
-                        ["Code", "Bezeichnung", "Lagerort", "System-Ist", "Mindest-Soll", "Gezahlter Ist-Bestand"],
+                        ["Code", "Bezeichnung", "Lagerort", "System-Ist", "Mindest-Soll", "Gezählter Ist-Bestand"],
                         inventur_pdf_daten
                     )
                     st.download_button(
@@ -628,7 +627,7 @@ def render_lager_verwaltung(supabase):
                 else:
                     st.warning("⚠️ PDF-Export inaktiv (pip install reportlab)")
             with col_inv_exp2:
-                inv_df = pd.DataFrame(inventur_pdf_daten, columns=["Code", "Bezeichnung", "Lagerort", "System-Ist", "Mindest-Soll", "Gezahlter Ist-Bestand"])
+                inv_df = pd.DataFrame(inventur_pdf_daten, columns=["Code", "Bezeichnung", "Lagerort", "System-Ist", "Mindest-Soll", "Gezählter Ist-Bestand"])
                 csv_inv = inv_df.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="📥 Inventurliste als CSV herunterladen",

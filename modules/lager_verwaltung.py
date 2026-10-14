@@ -8,7 +8,7 @@ import qrcode
 import cv2
 import numpy as np
 
-# ReportLab für saubere PDF-Generierung prüfen
+# ReportLab für PDF-Generierung prüfen
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -204,21 +204,32 @@ def render_lager_verwaltung(supabase):
                 st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
                 st.caption(f"Gefunden: {len(df)} Artikel")
                 
-                if PDF_EXPORT_AVAILABLE:
-                    pdf_bytes = generiere_pdf_bericht(
-                        "Lagerbestand & Materialliste",
-                        ["Code", "Bezeichnung", "Kategorie", "Lagerort", "Ist", "Soll", "Status"],
-                        pdf_roh_daten
-                    )
+                col_exp1, col_exp2 = st.columns(2)
+                with col_exp1:
+                    if PDF_EXPORT_AVAILABLE:
+                        pdf_bytes = generiere_pdf_bericht(
+                            "Lagerbestand & Materialliste",
+                            ["Code", "Bezeichnung", "Kategorie", "Lagerort", "Ist", "Soll", "Status"],
+                            pdf_roh_daten
+                        )
+                        st.download_button(
+                            label="📄 Materialliste als PDF herunterladen",
+                            data=pdf_bytes,
+                            file_name=f"Materialliste_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+                            mime="application/pdf",
+                            key="pdf_download_material"
+                        )
+                    else:
+                        st.warning("⚠️ PDF-Export inaktiv (pip install reportlab)")
+                with col_exp2:
+                    csv_daten = df.drop(columns=["ID"]).to_csv(index=False).encode('utf-8')
                     st.download_button(
-                        label="📄 Materialliste als PDF herunterladen",
-                        data=pdf_bytes,
-                        file_name=f"Materialliste_{datetime.now().strftime('%Y-%m-%d')}.pdf",
-                        mime="application/pdf",
-                        key="pdf_download_material"
+                        label="📥 Materialliste als CSV herunterladen",
+                        data=csv_daten,
+                        file_name=f"Materialliste_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                        mime="text/csv",
+                        key="csv_download_material"
                     )
-                else:
-                    st.info("💡 Hinweis für PDF-Export: Bitte stellen Sie sicher, dass 'reportlab' auf dem Server installiert ist (`pip install reportlab`).")
             else:
                 st.warning("Keine Artikel gefunden.")
 
@@ -238,7 +249,6 @@ def render_lager_verwaltung(supabase):
             with col_m_menge:
                 standard_menge = st.number_input("Standard-Menge pro Scan", min_value=1, value=1, step=1, key="global_standard_menge")
 
-            # Nativer Kamera-Input
             foto_input = st.camera_input("📷 QR-Code fotografieren", key="lager_camera_input")
 
             if foto_input:
@@ -273,7 +283,6 @@ def render_lager_verwaltung(supabase):
                         except Exception as e:
                             st.error(f"Fehler bei der Bildverarbeitung: {e}")
 
-            # Manuelle Alternative (Suche per Text oder Code)
             st.markdown("---")
             with st.expander("🔍 Manuelle Artikelsuche & Mengenauswahl (Alternativ zum Scan)"):
                 such_filter_m = st.text_input("Artikel suchen (Name, Ort oder Code)", placeholder="z.B. NYM...", key="filter_multi_artikel")
@@ -300,7 +309,6 @@ def render_lager_verwaltung(supabase):
                         st.toast(f"✅ {manuelle_menge}x {manueller_treffer['bezeichnung']} hinzugefügt!", icon="🛒")
                         st.rerun()
 
-            # Warenkorb & Gesamtabschluss mit Einzel-Löschung
             st.markdown("---")
             st.subheader("🛒 Aktuelle Scan-Liste (Warenkorb)")
 
@@ -513,14 +521,12 @@ def render_lager_verwaltung(supabase):
     with tabs[5]:
         st.subheader("📋 Systematische Inventur")
         
-        # Letzte Inventur aus den Bewegungen ermitteln
         letzte_inventur_datum = "Noch nie durchgeführt"
         try:
             inv_check = supabase.table("lager_bewegungen").select("*").eq("art", "Inventur").order("id", desc=True).limit(1).execute()
             if inv_check.data and len(inv_check.data) > 0:
-                k, v = inv_check.data[0], inv_check.data[0].get("kommentar", "")
+                v = inv_check.data[0].get("kommentar", "")
                 if "am " in v:
-                    # Datum aus dem Kommentar extrahieren
                     teil = v.split("am ")[1]
                     letzte_inventur_datum = teil.split(" von")[0] if " von" in teil else teil[:10]
         except Exception:
@@ -557,7 +563,6 @@ def render_lager_verwaltung(supabase):
                         for mat_id, neuer_ist in inventur_daten.items():
                             supabase.table("lager_material").update({"ist_bestand": neuer_ist}).eq("id", mat_id).execute()
                             
-                            # Bewegung für Historie & Datumseintrag protokollieren
                             supabase.table("lager_bewegungen").insert({
                                 "material_id": mat_id,
                                 "art": "Inventur",
@@ -570,7 +575,6 @@ def render_lager_verwaltung(supabase):
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
-            # PDF-Export für die Inventurliste
             st.markdown("---")
             for m in material_liste:
                 inventur_pdf_daten.append([
@@ -581,18 +585,32 @@ def render_lager_verwaltung(supabase):
                     "_______"
                 ])
 
-            if PDF_EXPORT_AVAILABLE:
-                inv_pdf_bytes = generiere_pdf_bericht(
-                    f"Inventur-Zählliste (Letzte Inventur: {letzte_inventur_datum})",
-                    ["Code", "Bezeichnung", "Lagerort", "System-Bestand", "Gezahlter Ist-Bestand"],
-                    inventur_pdf_daten
-                )
+            col_inv_exp1, col_inv_exp2 = st.columns(2)
+            with col_inv_exp1:
+                if PDF_EXPORT_AVAILABLE:
+                    inv_pdf_bytes = generiere_pdf_bericht(
+                        f"Inventur-Zählliste (Letzte Inventur: {letzte_inventur_datum})",
+                        ["Code", "Bezeichnung", "Lagerort", "System-Bestand", "Gezahlter Ist-Bestand"],
+                        inventur_pdf_daten
+                    )
+                    st.download_button(
+                        label="📄 Inventurliste als PDF herunterladen",
+                        data=inv_pdf_bytes,
+                        file_name=f"Inventur_Zaehlliste_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+                        mime="application/pdf",
+                        key="pdf_download_inventur"
+                    )
+                else:
+                    st.warning("⚠️ PDF-Export inaktiv (pip install reportlab)")
+            with col_inv_exp2:
+                inv_df = pd.DataFrame(inventur_pdf_daten, columns=["Code", "Bezeichnung", "Lagerort", "System-Bestand", "Gezahlter Ist-Bestand"])
+                csv_inv = inv_df.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="📄 Inventurliste / Zählbogen als PDF herunterladen",
-                    data=inv_pdf_bytes,
-                    file_name=f"Inventur_Zaehlliste_{datetime.now().strftime('%Y-%m-%d')}.pdf",
-                    mime="application/pdf",
-                    key="pdf_download_inventur"
+                    label="📥 Inventurliste als CSV herunterladen",
+                    data=csv_inv,
+                    file_name=f"Inventurliste_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                    mime="text/csv",
+                    key="csv_download_inventur"
                 )
 
     # --- TAB 7: CSV-IMPORT ---
@@ -669,18 +687,31 @@ def render_lager_verwaltung(supabase):
                     st.dataframe(log_df, use_container_width=True, hide_index=True)
                     st.caption(f"Letzte {len(log_df)} Buchungsvorgänge im System.")
 
-                    if PDF_EXPORT_AVAILABLE:
-                        log_pdf_bytes = generiere_pdf_bericht(
-                            "Entnahme- und Bewegungsprotokoll (Logs)",
-                            ["Art", "Artikel", "Code", "Menge", "Details & Projekt"],
-                            log_pdf_daten
-                        )
+                    col_log_exp1, col_log_exp2 = st.columns(2)
+                    with col_log_exp1:
+                        if PDF_EXPORT_AVAILABLE:
+                            log_pdf_bytes = generiere_pdf_bericht(
+                                "Entnahme- und Bewegungsprotokoll (Logs)",
+                                ["Art", "Artikel", "Code", "Menge", "Details & Projekt"],
+                                log_pdf_daten
+                            )
+                            st.download_button(
+                                label="📄 Entnahme-Logs als PDF herunterladen",
+                                data=log_pdf_bytes,
+                                file_name=f"Lager_Logs_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+                                mime="application/pdf",
+                                key="pdf_download_logs"
+                            )
+                        else:
+                            st.warning("⚠️ PDF-Export inaktiv (pip install reportlab)")
+                    with col_log_exp2:
+                        csv_log = log_df.to_csv(index=False).encode('utf-8')
                         st.download_button(
-                            label="📄 Entnahme-Logs als PDF herunterladen",
-                            data=log_pdf_bytes,
-                            file_name=f"Lager_Logs_{datetime.now().strftime('%Y-%m-%d')}.pdf",
-                            mime="application/pdf",
-                            key="pdf_download_logs"
+                            label="📥 Entnahme-Logs als CSV herunterladen",
+                            data=csv_log,
+                            file_name=f"Lager_Logs_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                            mime="text/csv",
+                            key="csv_download_logs"
                         )
             except Exception as e:
                 st.error(f"Fehler beim Laden der Logs: {e}")

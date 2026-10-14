@@ -557,16 +557,14 @@ def render_lager_verwaltung(supabase):
             for m in material_liste:
                 col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
                 with col1:
-                    # Prüfen ob gezählt wurde (Spalte gezählter_wert ist nicht None)
                     hat_gezahlt = m.get('gezählter_wert') is not None
                     status_icon = " ✅" if hat_gezahlt else ""
-                    st.markdown(f"**{m..get('bezeichnung')}**{status_icon}<br>📍 `{m.get('lagerort', 'Kein Ort')}`", unsafe_allow_html=True)
+                    st.markdown(f"**{m.get('bezeichnung')}**{status_icon}<br>📍 `{m.get('lagerort', 'Kein Ort')}`", unsafe_allow_html=True)
                 with col2:
                     st.markdown(f"**{m.get('ist_bestand', 0)}** {m.get('einheit', 'Stk.')}")
                 with col3:
                     st.markdown(f"{m.get('soll_bestand', 0)} {m.get('einheit', 'Stk.')}")
                 with col4:
-                    # Vorbelegung aus DB-Zwischenstand oder System-Ist
                     aktueller_wert = m.get('gezählter_wert')
                     if aktueller_wert is None:
                         aktueller_wert = int(m.get('ist_bestand', 0))
@@ -580,7 +578,6 @@ def render_lager_verwaltung(supabase):
                         label_visibility="collapsed"
                     )
                     
-                    # Wenn der Wert geändert wird, live in DB zwischenspeichern
                     if gezahlt != m.get('gezählter_wert'):
                         try:
                             supabase.table("lager_material").update({"gezählter_wert": gezahlt}).eq("id", m['id']).execute()
@@ -600,7 +597,6 @@ def render_lager_verwaltung(supabase):
                         inventur_kommentar = f"Benutzer: {current_user} | Inventur durchgeführt am {heute_datum}"
 
                         for mat_id, neuer_ist in inventur_daten.items():
-                            # Ist-Bestand aktualisieren und temporären Zählstand wieder auf None setzen
                             supabase.table("lager_material").update({
                                 "ist_bestand": neuer_ist,
                                 "gezählter_wert": None
@@ -616,7 +612,7 @@ def render_lager_verwaltung(supabase):
                         st.toast("Inventur erfolgreich abgeschlossen & Bestände aktualisiert!", icon="🎯")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Fehler: {echym}")
+                        st.error(f"Fehler: {e}")
 
             with col_fin2:
                 if st.button("🗑️ Zwischenstand zurücksetzen", use_container_width=True):

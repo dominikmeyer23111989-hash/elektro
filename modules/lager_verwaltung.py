@@ -108,7 +108,6 @@ def render_lager_verwaltung(supabase):
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            # High-Speed Live-Kamera Scanner über URL-Redirect (Superschnell & komplett automatisiert)
             scanner_html = """
             <div style="background-color: #f0f2f6; padding: 12px; border-radius: 10px; text-align: center; font-family: sans-serif;">
                 <p style="margin: 0 0 8px 0; font-size: 15px; font-weight: bold; color: #31333F;">📷 Live-Scanner (Sofort-Erkennung)</p>
@@ -120,7 +119,6 @@ def render_lager_verwaltung(supabase):
                 function onScanSuccess(decodedText, decodedResult) {
                     if (scanningActive) {
                         scanningActive = false;
-                        // Sofortige Weiterleitung löst einen unterbrechungsfreien Rerun in Streamlit aus
                         window.location.href = window.location.pathname + "?scanned_code=" + encodeURIComponent(decodedText);
                     }
                 }
@@ -449,27 +447,25 @@ def render_lager_verwaltung(supabase):
         st.subheader("📜 Historie & Entnahmeprotokoll (Logs)")
         st.caption("Wer hat wann, wie viel entnommen und für welches Projekt?")
 
-        # Rollenprüfung: Nur Admins, Chefs oder Berechtigte sehen die Logs
         user_rolle = st.session_state.get("user_data", {}).get("rolle", "")
         if user_rolle not in ["Admin", "Inhaber", "Chef"] and not hat_recht("2", "bearbeiten"):
             st.error("⛔ Sie haben keine Berechtigung, das Entnahmeprotokoll einzusehen.")
         else:
             try:
-                # Bewegungen abrufen
-                b_res = supabase.table("lager_bewegungen").select("*").order("created_at", desc=True).limit(200).execute()
+                # Nach ID absteigend sortieren (neueste Einträge zuerst)
+                b_res = supabase.table("lager_bewegungen").select("*").order("id", desc=True).limit(200).execute()
                 bewegungen = b_res.data or []
 
                 if not bewegungen:
                     st.info("Noch keine Materialbewegungen aufgezeichnet.")
                 else:
-                    # Material-Mapping für Namen erstellen
                     mat_map = {m["id"]: m for m in material_liste}
 
                     log_daten = []
                     for b in bewegungen:
                         mat_info = mat_map.get(b.get("material_id"), {})
                         log_daten.append({
-                            "Zeitpunkt": b.get("created_at", "-"),
+                            "ID": b.get("id"),
                             "Art": b.get("art", "-"),
                             "Artikel": mat_info.get("bezeichnung", "Unbekannt"),
                             "Code": mat_info.get("artikelnummer", "-"),

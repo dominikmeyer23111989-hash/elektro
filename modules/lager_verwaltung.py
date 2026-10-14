@@ -523,10 +523,10 @@ def render_lager_verwaltung(supabase):
                     else:
                         st.error("Keine Berechtigung.")
 
-    # --- TAB 6: INVENTUR (Session-Zwischenspeicherung & Häkchen) ---
+    # --- TAB 6: INVENTUR (Session-Zwischenspeicherung & Häkchen bleiben erhalten) ---
     with tabs[5]:
         st.subheader("📋 Systematische Inventur (Live-Zwischengespeichert)")
-        st.caption("Ihre Eingaben werden automatisch im Arbeitsspeicher gehalten. Artikel mit einem grünen Häkchen ✅ wurden bereits bearbeitet/gezählt.")
+        st.caption("Ihre Eingaben bleiben im Arbeitsspeicher erhalten. Artikel mit einem grünen Häkchen ✅ wurden bereits gezählt.")
         
         letzte_inventur_datum = "Noch nie durchgeführt"
         try:
@@ -614,10 +614,8 @@ def render_lager_verwaltung(supabase):
                                 "kommentar": inventur_kommentar
                             }).execute()
 
-                        # Session State nach erfolgreicher Buchung zurücksetzen
-                        st.session_state["inventur_werte"] = {}
-                        st.session_state["inventur_gezahlt_ids"] = set()
-
+                        # HINWEIS: Wir löschen die Häkchen und Werte hier NICHT mehr automatisch, 
+                        # damit Sie sehen, was gebucht wurde. Zum Zurücksetzen gibt es den Extra-Button rechts.
                         st.toast("Inventur erfolgreich abgeschlossen & Bestände aktualisiert!", icon="🎯")
                         st.rerun()
                     except Exception as e:
@@ -627,7 +625,7 @@ def render_lager_verwaltung(supabase):
                 if st.button("🗑️ Zwischenstand zurücksetzen", use_container_width=True):
                     st.session_state["inventur_werte"] = {}
                     st.session_state["inventur_gezahlt_ids"] = set()
-                    st.toast("Alle Zähl-Zwischenstände zurückgesetzt.", icon="🔄")
+                    st.toast("Alle Zähl-Zwischenstände und Häkchen zurückgesetzt.", icon="🔄")
                     st.rerun()
 
             # PDF-Export für die Inventurliste

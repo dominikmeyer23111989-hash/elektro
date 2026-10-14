@@ -5,7 +5,15 @@ from io import BytesIO
 import barcode
 from barcode.writer import ImageWriter
 import qrcode
-import streamlit.components.v1 as components
+import cv2
+import numpy as np
+
+# OpenCV QR-Detector initialisieren
+try:
+    qr_detector = cv2.QRCodeDetector()
+    QR_SCAN_AVAILABLE = True
+except Exception:
+    QR_SCAN_AVAILABLE = False
 
 def hat_recht(modul_id, aktion="sehen"):
     user = st.session_state.get("user_data", {})
@@ -16,7 +24,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Live-Rückkamera-Scanner, Multibuchungs-Warenkorb & Direkte QR-Anzeige.")
+    st.caption("High-Speed Lager: One-Tap Kamera-Scan, Multibuchungs-Warenkorb & Direkte QR-Anzeige.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -89,83 +97,55 @@ def render_lager_verwaltung(supabase):
             else:
                 st.warning("Keine Artikel gefunden.")
 
-    # --- TAB 2: MULTIBUCHUNG & SCHNELL-SCAN ---
+    # --- TAB 2: MULTIBUCHUNG & SCHNELL-SCAN (ONE-TAP KAMERA) ---
     with tabs[1]:
-        st.subheader("⚡ Multibuchung (Mehrere Artikel scannen & gesammelt buchen)")
-        st.caption("Scannen Sie den QR-Code mit der Rückkamera oder wählen Sie den Artikel aus.")
+        st.subheader("⚡ Multibuchung (One-Tap Kamera-Scan für Mitarbeiter)")
+        st.caption("Einfach auf 'Foto aufnehmen' tippen, QR-Code am Regal fotografieren – der Artikel wird sofort automatisch erkannt!")
 
         if not material_liste:
             st.warning("Noch keine Artikel im Lager vorhanden.")
         elif not darf_bearbeiten:
             st.error("⛔ Ihr Account hat keine Berechtigung.")
         else:
-            scanner_html = """
-            <div style="background-color: #f0f2f6; padding: 12px; border-radius: 10px; text-align: center; font-family: sans-serif;">
-                <p style="margin: 0 0 8px 0; font-size: 15px; font-weight: bold; color: #31333F;">📷 Live-Rückkamera Scanner</p>
-                <button onclick="startScanner()" style="background-color: #007BFF; color: white; border: none; padding: 10px 20px; font-size: 14px; font-weight: bold; border-radius: 6px; cursor: pointer; margin-bottom: 10px;">🚀 Kamera-Scanner starten</button>
-                <div id="reader" style="width: 100%; max-width: 320px; margin: auto; border-radius: 8px; overflow: hidden;"></div>
-                <div id="result-box" style="margin-top: 12px; display: none; background: white; padding: 10px; border-radius: 6px; border: 2px solid #00C853;">
-                    <p style="margin: 0; font-size: 12px; color: #666;">Erfasster Code:</p>
-                    <p id="scanned-code-text" style="margin: 4px 0; font-size: 18px; font-weight: bold; color: #000;"></p>
-                    <button onclick="copyToStreamlit()" style="background-color: #00C853; color: white; border: none; padding: 8px 16px; font-size: 14px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%;">✅ Diesen Code übernehmen</button>
-                </div>
-            </div>
-            <script src="https://unpkg.com/html5-qrcode"></script>
-            <script>
-                let lastScannedCode = "";
-                let html5QrcodeScanner = null;
+            buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"], key="buchungs_art_one_tap")
 
-                function startScanner() {
-                    if (html5QrcodeScanner) {
-                        return;
-                    }
-                    html5QrcodeScanner = new Html5QrcodeScanner(
-                        "reader", { 
-                            fps: 10, 
-                            qrbox: { width: 220, height: 220 },
-                            facingMode: "environment" 
-                        }, false);
-                    
-                    html5QrcodeScanner.render(onScanSuccess, (err) => {});
-                }
+            erfasster_code = ""
 
-                function onScanSuccess(decodedText, decodedResult) {
-                    if (decodedText !== lastScannedCode) {
-                        lastScannedCode = decodedText;
-                        document.getElementById('scanned-code-text').innerText = decodedText;
-                        document.getElementById('result-box').style.display = 'block';
-                    }
-                }
+            # Nativer Streamlit Kamera-Input (funktioniert auf Smartphones absolut reibungslos)
+            foto_input = st.camera_input("📷 QR-Code fotografieren", key="lager_camera_input")
 
-                function copyToStreamlit() {
-                    const inputField = window.parent.document.querySelector('input[aria-label*="Code scannen"]');
-                    if (inputField) {
-                        inputField.value = lastScannedCode;
-                        inputField.dispatchEvent(new Event('input', { bubbles: true }));
-                        inputField.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                }
-            </script>
-            """
-            components.html(scanner_html, height=480)
+            if foto_input and QR_SCAN_AVAILABLE:
+                try:
+                    file_bytes = np.asarray(bytearray(foto_input.read()), dtype=np.uint8)
+                    opencv_image = cv2.imdecode(file_bytes, 1)
 
-            col_add1, col_add2 = st.columns([2, 1])
-            with col_add1:
-                eingabe_code = st.text_input("🔍 Code scannen oder Artikel wählen", placeholder="Code eingeben oder scannen...", key="multiscan_input")
-            with col_add2:
-                buchungs_art_multi = st.selectbox("Buchungs-Modus", ["📤 Entnahme (Ausbuchung)", "📥 Zugang (Einbuchung)"])
+                    # QR-Code Erkennung über OpenCV
+                    retval, decoded_info, points, straight_qrcode = qr_detector.detectAndDecodeMulti(opencv_image)
+                    if retval and decoded_info and decoded_info[0]:
+                        erfasster_code = str(decoded_info[0]).strip()
+                        st.success(f"🎯 **Erkannt! Artikel-Code:** `{erfasster_code}`")
+                    else:
+                        # Fallback Einzel-Erkennung
+                        data, bbox, _ = qr_detector.detectAndDecode(opencv_image)
+                        if data:
+                            erfasster_code = str(data).strip()
+                            st.success(f"🎯 **Erkannt! Artikel-Code:** `{erfasster_code}`")
+                        else:
+                            st.warning("⚠️ Kein QR-Code auf dem Foto erkannt. Bitte halten Sie die Kamera etwas näher an den Code und sorgen Sie für gutes Licht.")
+                except Exception as e:
+                    st.error(f"Fehler bei der Bildverarbeitung: {e}")
 
+            # Manuelle Eingabe als Alternative / Fallback
+            eingabe_manuell = st.text_input("Oder Artikelnummer direkt eintippen", placeholder="Code eingeben...", key="manuell_code_input")
+            if eingabe_manuell:
+                erfasster_code = eingabe_manuell.strip()
+
+            # Artikel in der Liste suchen
             aktueller_treffer = None
-            if eingabe_code:
-                aktueller_treffer = next((m for m in material_liste if str(m.get('artikelnummer')).strip().lower() == str(eingabe_code).strip().lower()), None)
-            
-            if not aktueller_treffer:
-                such_filter_m = st.text_input("Oder Artikel in Liste suchen", placeholder="z.B. NYM...", key="filter_multi_artikel")
-                passende_m = [m for m in material_liste if such_filter_m.lower() in f"{m.get('bezeichnung')} {m.get('lagerort')} {m.get('artikelnummer')}".lower()] if such_filter_m else []
-                
-                if passende_m:
-                    label_m = st.selectbox("Treffer", options=[f"{m['bezeichnung']} | Ort: {m.get('lagerort')} | Bestand: {m['ist_bestand']}" for m in passende_m])
-                    aktueller_treffer = next((m for m in passende_m if f"{m['bezeichnung']} | Ort: {m.get('lagerort')} | Bestand: {m['ist_bestand']}" == label_m), None)
+            if erfasster_code:
+                aktueller_treffer = next((m for m in material_liste if str(m.get('artikelnummer', '')).strip().lower() == erfasster_code.lower()), None)
+                if not aktueller_treffer:
+                    st.error(f"⚠️ Der Code '{erfasster_code}' wurde im System nicht gefunden.")
 
             if aktueller_treffer:
                 st.markdown("---")
@@ -193,7 +173,7 @@ def render_lager_verwaltung(supabase):
                             pass
 
                 with col_i3:
-                    menge_hinzu = st.number_input("Menge", min_value=1, value=1, step=1, key="menge_multi_add")
+                    menge_hinzu = st.number_input("Menge", min_value=1, value=1, step=1, key="menge_one_tap_add")
                     if st.button("➕ In Warenkorb", type="primary", use_container_width=True):
                         st.session_state["multibuchung_liste"].append({
                             "id": aktueller_treffer['id'],
@@ -213,12 +193,12 @@ def render_lager_verwaltung(supabase):
             st.subheader("🛒 Aktuelle Scan-Liste (Warenkorb)")
 
             if not st.session_state["multibuchung_liste"]:
-                st.info("Der Warenkorb ist leer. Scannen oder wählen Sie Artikel aus.")
+                st.info("Der Warenkorb ist leer. Machen Sie ein Foto vom QR-Code, um Artikel hinzuzufügen.")
             else:
                 cart_df = pd.DataFrame(st.session_state["multibuchung_liste"])
                 st.dataframe(cart_df[["bezeichnung", "code", "lagerort", "art", "menge", "einheit"]], use_container_width=True, hide_index=True)
 
-                kommentar_gesamt = st.text_input("Projekt / Baustelle für alle Artikel im Warenkorb", placeholder="z.B. BV Bahnhofstraße", key="kommentar_multibuchung")
+                kommentar_gesamt = st.text_input("Projekt / Baustelle für alle Artikel im Warenkorb", placeholder="z.B. BV Bahnhofstraße", key="kommentar_multibuchung_one_tap")
 
                 col_c1, col_c2 = st.columns(2)
                 with col_c1:

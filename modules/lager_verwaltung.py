@@ -520,6 +520,7 @@ def render_lager_verwaltung(supabase):
     # --- TAB 6: INVENTUR ---
     with tabs[5]:
         st.subheader("📋 Systematische Inventur")
+        st.caption("Vergleichen Sie den aktuellen System-Ist-Bestand mit dem Mindest-Soll und tragen Sie den gezählten Ist-Bestand ein.")
         
         letzte_inventur_datum = "Noch nie durchgeführt"
         try:
@@ -542,18 +543,39 @@ def render_lager_verwaltung(supabase):
             inventur_pdf_daten = []
             with st.form("inventur_form"):
                 inventur_daten = {}
+                
+                # Tabellenkopf
+                h1, h2, h3, h4 = st.columns([2, 1, 1, 2])
+                with h1:
+                    st.markdown("**Artikel & Ort**")
+                with h2:
+                    st.markdown("**System-Ist**")
+                with h3:
+                    st.markdown("**Mindest-Soll**")
+                with h4:
+                    st.markdown("**Gezählter Ist-Bestand**")
+                st.divider()
+
                 for m in material_liste:
-                    col1, col2, col3 = st.columns([3, 2, 2])
+                    col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
                     with col1:
-                        st.write(f"**{m.get('bezeichnung')}** | 📍 `{m.get('lagerort', 'Kein Ort')}`")
+                        st.markdown(f"**{m.get('bezeichnung')}**<br>📍 `{m.get('lagerort', 'Kein Ort')}`", unsafe_allow_html=True)
                     with col2:
-                        st.write(f"Soll: **{m.get('ist_bestand', 0)}**")
+                        st.markdown(f"**{m.get('ist_bestand', 0)}** {m.get('einheit', 'Stk.')}")
                     with col3:
-                        gezahlt = st.number_input("Ist", min_value=0, value=int(m.get('ist_bestand', 0)), key=f"inv_{m['id']}", label_visibility="collapsed")
+                        st.markdown(f"{m.get('soll_bestand', 0)} {m.get('einheit', 'Stk.')}")
+                    with col4:
+                        gezahlt = st.number_input(
+                            "Ist", 
+                            min_value=0, 
+                            value=int(m.get('ist_bestand', 0)), 
+                            key=f"inv_{m['id']}", 
+                            label_visibility="collapsed"
+                        )
                         inventur_daten[m['id']] = gezahlt
                     st.divider()
 
-                if st.form_submit_button("✅ Inventur finalisieren", type="primary", use_container_width=True):
+                if st.form_submit_button("✅ Inventur finalisieren & Ist-Bestände aktualisieren", type="primary", use_container_width=True):
                     try:
                         user_data = st.session_state.get("user_data", {})
                         current_user = user_data.get("name") or user_data.get("benutzername") or user_data.get("username") or "Admin"
@@ -561,6 +583,7 @@ def render_lager_verwaltung(supabase):
                         inventur_kommentar = f"Benutzer: {current_user} | Inventur durchgeführt am {heute_datum}"
 
                         for mat_id, neuer_ist in inventur_daten.items():
+                            # Aktualisiert ausschließlich den Ist-Bestand, das Soll bleibt unangetastet!
                             supabase.table("lager_material").update({"ist_bestand": neuer_ist}).eq("id", mat_id).execute()
                             
                             supabase.table("lager_bewegungen").insert({
@@ -570,11 +593,12 @@ def render_lager_verwaltung(supabase):
                                 "kommentar": inventur_kommentar
                             }).execute()
 
-                        st.toast("Inventur erfolgreich abgeschlossen & Datum aktualisiert!", icon="🎯")
+                        st.toast("Inventur erfolgreich abgeschlossen & Ist-Bestände aktualisiert!", icon="🎯")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
+            # PDF-Export für die Inventurliste
             st.markdown("---")
             for m in material_liste:
                 inventur_pdf_daten.append([
@@ -582,6 +606,7 @@ def render_lager_verwaltung(supabase):
                     str(m.get('bezeichnung', '')),
                     str(m.get('lagerort', '-')),
                     f"{m.get('ist_bestand', 0)} {m.get('einheit', 'Stk.')}",
+                    f"{m.get('soll_bestand', 0)} {m.get('einheit', 'Stk.')}",
                     "_______"
                 ])
 
@@ -590,7 +615,7 @@ def render_lager_verwaltung(supabase):
                 if PDF_EXPORT_AVAILABLE:
                     inv_pdf_bytes = generiere_pdf_bericht(
                         f"Inventur-Zählliste (Letzte Inventur: {letzte_inventur_datum})",
-                        ["Code", "Bezeichnung", "Lagerort", "System-Bestand", "Gezahlter Ist-Bestand"],
+                        ["Code", "Bezeichnung", "Lagerort", "System-Ist", "Mindest-Soll", "Gezahlter Ist-Bestand"],
                         inventur_pdf_daten
                     )
                     st.download_button(
@@ -603,7 +628,7 @@ def render_lager_verwaltung(supabase):
                 else:
                     st.warning("⚠️ PDF-Export inaktiv (pip install reportlab)")
             with col_inv_exp2:
-                inv_df = pd.DataFrame(inventur_pdf_daten, columns=["Code", "Bezeichnung", "Lagerort", "System-Bestand", "Gezahlter Ist-Bestand"])
+                inv_df = pd.DataFrame(inventur_pdf_daten, columns=["Code", "Bezeichnung", "Lagerort", "System-Ist", "Mindest-Soll", "Gezahlter Ist-Bestand"])
                 csv_inv = inv_df.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="📥 Inventurliste als CSV herunterladen",

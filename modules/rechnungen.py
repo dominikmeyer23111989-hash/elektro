@@ -4,8 +4,6 @@ import pandas as pd
 from fpdf import FPDF
 from zoneinfo import ZoneInfo
 from io import BytesIO
-import base64
-from PIL import Image
 
 class RechnungsPDF(FPDF):
     def header(self):
@@ -80,7 +78,7 @@ def generate_rechnung_pdf(rechnung, positionen):
 
 def render_rechnungen_verwaltung(supabase):
     st.title("💶 11. Rechnungs- & Abrechnungsmodul")
-    st.caption("Rechnen Sie erledigte Aufträge direkt mit kompletter Lager- und Materialübernahme ab.")
+    st.caption("Rechnen Sie Aufträge ab, verwalten Sie Preise und exportieren Sie Rechnungs-PDFs.")
 
     try:
         r_res = supabase.table("rechnungen").select("*").order("erstellt_am", desc=True).execute()
@@ -95,21 +93,15 @@ def render_rechnungen_verwaltung(supabase):
         vorlagen_liste = []
 
     try:
-        # Alle Aufträge laden, um sie flexibel nach Status zu filtern
+        # Wir laden ALLE Aufträge, damit keiner wegen abweichendem Status-Text verloren geht
         a_res = supabase.table("auftraege").select("id, auftragsnummer, freitext_kunde, arbeiten, benoetigtes_material, kunde_unterschrift, mitarbeiter_unterschrift, kunden(vorname, nachname, firma), status").execute()
         alle_auftraege = a_res.data or []
     except Exception:
         alle_auftraege = []
 
-    # Filter für erledigte Aufträge (ignoriert Groß-/Kleinschreibung)
-    erledigte_auftraege = [
-        a for a in alle_auftraege 
-        if str(a.get("status", "")).strip().lower() in ["erledigt", "fertig", "abgeschlossen"]
-    ]
-
     tabs = st.tabs([
         "📄 Rechnungsübersicht & Filter", 
-        "🚀 Erledigte Aufträge abrechnen", 
+        "🚀 Aufträge abrechnen", 
         "⚙️ Standard-Preiskatalog"
     ])
 
@@ -192,23 +184,22 @@ def render_rechnungen_verwaltung(supabase):
                     )
 
     # =========================================================================
-    # TAB 2: ERLEDIGTE AUFTRÄGE ABRECHNEN
+    # TAB 2: AUFTRÄGE ABRECHNEN (ALLE AUFTRÄGE MIT STATUS-ANZEIGE)
     # =========================================================================
     with tabs[1]:
-        st.subheader("Erledigte Aufträge abrechnen")
-        st.caption("Wählen Sie einen erledigten Auftrag aus. Die App übernimmt automatisch den Arbeitsbericht und sämtliche verbrauchten Lagerartikel.")
+        st.subheader("Aufträge in Rechnung umwandeln")
+        st.caption("Hier sehen Sie alle Aufträge im System. Wählen Sie einen Auftrag aus, um den Arbeitsbericht und alle Lager-Materialien direkt zu übernehmen.")
 
         if "rechnung_positionen_temp" not in st.session_state:
             st.session_state["rechnung_positionen_temp"] = []
 
-        if not erledigte_auftraege:
-            st.warning("⚠️ Keine erledigten Aufträge gefunden! (Hinweis: Prüfen Sie im Auftragsmodul, ob Aufträge den Status 'Erledigt' haben).")
-            st.info(f"Insgesamt sind im System {len(alle_auftraege)} Aufträge vorhanden.")
+        if not alle_auftraege:
+            st.warning("⚠️ Keine Aufträge in der Datenbank gefunden.")
         else:
             ausgewaehlter_auftrag = st.selectbox(
-                "Erledigten Auftrag auswählen",
-                options=[None] + erledigte_auftraege,
-                format_func=lambda x: "--- Auftrag wählen ---" if x is None else f"Auftrag {x.get('auftragsnummer')} | Kunde: {x.get('kunden', {}).get('nachname', '') or x.get('freitext_kunde', 'Unbekannt')} | {x.get('arbeiten', '')[:40]}..."
+                "Auftrag auswählen",
+                options=[None] + alle_auftraege,
+                format_func=lambda x: "--- Auftrag wählen ---" if x is None else f"[{x.get('status', 'Unbekannt')}] Auftrag {x.get('auftragsnummer')} | Kunde: {x.get('kunden', {}).get('nachname', '') or x.get('freitext_kunde', 'Unbekannt')}"
             )
 
             if ausgewaehlter_auftrag:
@@ -217,13 +208,9 @@ def render_rechnungen_verwaltung(supabase):
                 if not k_name_auto:
                     k_name_auto = ausgewaehlter_auftrag.get("freitext_kunde", "Kunde")
 
-                st.success(f"Auftrag {ausgewaehlter_auftrag.get('auftragsnummer')} für Kunde **{k_name_auto}** ausgewählt.")
+                st.success(f"Auftrag {ausgewaehlter_auftrag.get('auftragsnummer')} (Status: {ausgewaehlter_auftrag.get('status')}) für Kunde **{k_name_auto}** ausgewählt.")
                 
-                # Arbeitsbericht & Unterschriften-Status anzeigen
                 st.write(f"📝 **Arbeitsbericht:** {ausgewaehlter_auftrag.get('arbeiten', '-')}")
-                has_kunde_sig = bool(ausgewaehlter_auftrag.get('kunde_unterschrift'))
-                has_ma_sig = bool(ausgewaehlter_auftrag.get('mitarbeiter_unterschrift'))
-                st.write(f"✍️ **Unterschriften vorhanden:** Kunde: {'✅ Ja' : '❌ Nein'} | Monteur: {'✅ Ja' : '❌ Nein'}")
 
                 # Lager-Material des Auftrags laden
                 try:
@@ -242,7 +229,7 @@ def render_rechnungen_verwaltung(supabase):
                         "einzelpreis_netto": 120.0
                     })
 
-                    # 2. Alle verbrauchten Lager- und Fremdmaterialien aus dem Auftrag übernehmen
+                    # 2. Materialpositionen übernehmen
                     for am in auftrag_mat:
                         if am.get("ist_fremdmaterial"):
                             bez = am.get("freitext_bezeichnung", "Fremdteil")
@@ -253,9 +240,9 @@ def render_rechnungen_verwaltung(supabase):
                         st.session_state["rechnung_positionen_temp"].append({
                             "beschreibung": f"Material: {bez}",
                             "menge": float(am.get("menge", 1)),
-                            "einzelpreis_netto": 15.0 # Standard-Startpreis
+                            "einzelpreis_netto": 15.0
                         })
-                    st.toast("Kompletter Auftrag in Rechnung übernommen!", icon="🎯")
+                    st.toast("Daten in Rechnung übernommen!", icon="🎯")
                     st.rerun()
 
         st.markdown("---")

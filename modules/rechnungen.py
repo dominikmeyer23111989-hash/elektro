@@ -4,6 +4,8 @@ import pandas as pd
 from fpdf import FPDF
 from zoneinfo import ZoneInfo
 from io import BytesIO
+import base64
+from PIL import Image
 
 class RechnungsPDF(FPDF):
     def header(self):
@@ -78,7 +80,7 @@ def generate_rechnung_pdf(rechnung, positionen):
 
 def render_rechnungen_verwaltung(supabase):
     st.title("💶 11. Rechnungs- & Abrechnungsmodul")
-    st.caption("Verwalten Sie Preisvorlagen, rechnen Sie erledigte Aufträge ab und exportieren Sie professionelle Rechnungs-PDFs.")
+    st.caption("Rechnen Sie erledigte Aufträge direkt mit kompletter Lager- und Materialübernahme ab.")
 
     try:
         r_res = supabase.table("rechnungen").select("*").order("erstellt_am", desc=True).execute()
@@ -93,11 +95,17 @@ def render_rechnungen_verwaltung(supabase):
         vorlagen_liste = []
 
     try:
-        # Nur erledigte Aufträge laden
-        a_res = supabase.table("auftraege").select("id, auftragsnummer, freitext_kunde, arbeiten, kunden(vorname, nachname, firma), status").eq("status", "Erledigt").execute()
-        erledigte_auftraege = a_res.data or []
+        # Alle Aufträge laden, um sie flexibel nach Status zu filtern
+        a_res = supabase.table("auftraege").select("id, auftragsnummer, freitext_kunde, arbeiten, benoetigtes_material, kunde_unterschrift, mitarbeiter_unterschrift, kunden(vorname, nachname, firma), status").execute()
+        alle_auftraege = a_res.data or []
     except Exception:
-        erledigte_auftraege = []
+        alle_auftraege = []
+
+    # Filter für erledigte Aufträge (ignoriert Groß-/Kleinschreibung)
+    erledigte_auftraege = [
+        a for a in alle_auftraege 
+        if str(a.get("status", "")).strip().lower() in ["erledigt", "fertig", "abgeschlossen"]
+    ]
 
     tabs = st.tabs([
         "📄 Rechnungsübersicht & Filter", 
@@ -130,7 +138,7 @@ def render_rechnungen_verwaltung(supabase):
             gefilterte_rechnungen.append(r)
 
         if not gefilterte_rechnungen:
-            st.info("Keine Rechnungen gefunden, die den Kriterien entsprechen.")
+            st.info("Keine Rechnungen gefunden.")
         else:
             for r in gefilterte_rechnungen:
                 try:
@@ -152,7 +160,7 @@ def render_rechnungen_verwaltung(supabase):
                         st.write(f"**Rechnungsdatum:** {r.get('rechnungs_datum')}")
                         st.write(f"**MwSt.-Satz:** {r.get('mwst_satz')}%")
                     with col_det2:
-                        neuer_status = st.selectbox("Status ändern", ["Offen", "Bezahlt", "Storniert"], index=["Offen", "Bezahlt", "Storniert"].index(status), key=f"status_sel_{r['id']}")
+                        neuer_status = st.selectbox("Status ändern", ["Offen", "Bezahlt", "Storniert"], index=["Offen", "Bezahlt", "Storniert"].index(status) if status in ["Offen", "Bezahlt", "Storniert"] else 0, key=f"status_sel_{r['id']}")
                         if neuer_status != status:
                             try:
                                 supabase.table("rechnungen").update({"status": neuer_status}).eq("id", r["id"]).execute()
@@ -187,14 +195,15 @@ def render_rechnungen_verwaltung(supabase):
     # TAB 2: ERLEDIGTE AUFTRÄGE ABRECHNEN
     # =========================================================================
     with tabs[1]:
-        st.subheader("Erledigte Aufträge in Rechnungen umwandeln")
-        st.caption("Hier sehen Sie alle Aufträge, die vom Team als 'Erledigt' markiert wurden und noch abgerechnet werden können.")
+        st.subheader("Erledigte Aufträge abrechnen")
+        st.caption("Wählen Sie einen erledigten Auftrag aus. Die App übernimmt automatisch den Arbeitsbericht und sämtliche verbrauchten Lagerartikel.")
 
         if "rechnung_positionen_temp" not in st.session_state:
             st.session_state["rechnung_positionen_temp"] = []
 
         if not erledigte_auftraege:
-            st.info("Aktuell gibt es keine erledigten Aufträge, die auf Abrechnung warten.")
+            st.warning("⚠️ Keine erledigten Aufträge gefunden! (Hinweis: Prüfen Sie im Auftragsmodul, ob Aufträge den Status 'Erledigt' haben).")
+            st.info(f"Insgesamt sind im System {len(alle_auftraege)} Aufträge vorhanden.")
         else:
             ausgewaehlter_auftrag = st.selectbox(
                 "Erledigten Auftrag auswählen",
@@ -203,45 +212,50 @@ def render_rechnungen_verwaltung(supabase):
             )
 
             if ausgewaehlter_auftrag:
-                # Kundenname ermitteln
                 k = ausgewaehlter_auftrag.get("kunden") or {}
                 k_name_auto = f"{k.get('vorname', '')} {k.get('nachname', '')}".strip()
                 if not k_name_auto:
                     k_name_auto = ausgewaehlter_auftrag.get("freitext_kunde", "Kunde")
 
                 st.success(f"Auftrag {ausgewaehlter_auftrag.get('auftragsnummer')} für Kunde **{k_name_auto}** ausgewählt.")
+                
+                # Arbeitsbericht & Unterschriften-Status anzeigen
+                st.write(f"📝 **Arbeitsbericht:** {ausgewaehlter_auftrag.get('arbeiten', '-')}")
+                has_kunde_sig = bool(ausgewaehlter_auftrag.get('kunde_unterschrift'))
+                has_ma_sig = bool(ausgewaehlter_auftrag.get('mitarbeiter_unterschrift'))
+                st.write(f"✍️ **Unterschriften vorhanden:** Kunde: {'✅ Ja' : '❌ Nein'} | Monteur: {'✅ Ja' : '❌ Nein'}")
 
-                # Material des Auftrags laden
+                # Lager-Material des Auftrags laden
                 try:
                     am_res = supabase.table("auftrag_material").select("*, lager_material(bezeichnung, einheit)").eq("auftrag_id", ausgewaehlter_auftrag["id"]).execute()
                     auftrag_mat = am_res.data or []
                 except Exception:
                     auftrag_mat = []
 
-                if st.button("📥 Auftragsdaten & Material in Positionen übernehmen"):
+                if st.button("📥 Auftragsdaten, Bericht & Lager-Material in Positionen übernehmen"):
                     st.session_state["rechnung_positionen_temp"] = []
                     
-                    # 1. Leistung / Arbeit als Position
+                    # 1. Arbeitsbericht als Leistungsposition
                     st.session_state["rechnung_positionen_temp"].append({
-                        "beschreibung": f"Montage- & Elektroarbeiten gem. Auftrag {ausgewaehlter_auftrag.get('auftragsnummer')}: {ausgewaehlter_auftrag.get('arbeiten', '')}",
+                        "beschreibung": f"Arbeitsleistung gem. Auftragsbericht ({ausgewaehlter_auftrag.get('auftragsnummer')}): {ausgewaehlter_auftrag.get('arbeiten', '')}",
                         "menge": 1.0,
-                        "einzelpreis_netto": 150.0  # Richtwert, anpassbar
+                        "einzelpreis_netto": 120.0
                     })
 
-                    # 2. Materialpositionen übernehmen
+                    # 2. Alle verbrauchten Lager- und Fremdmaterialien aus dem Auftrag übernehmen
                     for am in auftrag_mat:
                         if am.get("ist_fremdmaterial"):
                             bez = am.get("freitext_bezeichnung", "Fremdteil")
                         else:
                             minfo = am.get("lager_material") or {}
-                            bez = minfo.get("bezeichnung", "Material")
+                            bez = minfo.get("bezeichnung", "Lagerartikel")
                         
                         st.session_state["rechnung_positionen_temp"].append({
                             "beschreibung": f"Material: {bez}",
                             "menge": float(am.get("menge", 1)),
-                            "einzelpreis_netto": 10.0 # Standardpreis als Start
+                            "einzelpreis_netto": 15.0 # Standard-Startpreis
                         })
-                    st.toast("Daten in Rechnung übernommen!", icon="🎯")
+                    st.toast("Kompletter Auftrag in Rechnung übernommen!", icon="🎯")
                     st.rerun()
 
         st.markdown("---")
@@ -256,7 +270,7 @@ def render_rechnungen_verwaltung(supabase):
             with col2:
                 r_mwst = st.number_input("Mehrwertsteuersatz (%)", min_value=0.0, value=19.0, step=0.5)
 
-            st.markdown("##### Artikel aus Preiskatalog hinzufügen")
+            st.markdown("##### Aus Preiskatalog hinzufügen")
             col_katalog1, col_katalog2, col_katalog3 = st.columns([3, 1, 1])
             with col_katalog1:
                 sel_vorlage = st.selectbox(
@@ -300,7 +314,6 @@ def render_rechnungen_verwaltung(supabase):
 
             submitted_rechnung = st.form_submit_button("💾 Rechnung speichern & ausstellen", type="primary", use_container_width=True)
 
-        # Aktuelle Rechnungspositionen anzeigen & bearbeiten
         if st.session_state["rechnung_positionen_temp"]:
             st.markdown("##### 📋 Aktuelle Rechnungspositionen:")
             
@@ -359,7 +372,7 @@ def render_rechnungen_verwaltung(supabase):
     # =========================================================================
     with tabs[2]:
         st.subheader("⚙️ Standard-Preiskatalog & Vorlagen")
-        st.caption("Hinterlegen Sie hier feste Preise für Arbeitsstunden, Materialien oder Pauschalen, um sie beim Rechnenschreiben blitzschnell auszuwählen.")
+        st.caption("Hinterlegen Sie hier feste Preise für Arbeitsstunden, Materialien oder Pauschalen.")
 
         with st.form("neue_vorlage_form"):
             v_bech = st.text_input("Bezeichnung / Artikelname *", placeholder="z. B. Monteurstunde Standard")
@@ -400,7 +413,6 @@ def render_rechnungen_verwaltung(supabase):
             } for v in vorlagen_liste])
             st.dataframe(df_vorlagen, use_container_width=True, hide_index=True)
             
-            # Lösch-Funktion für Vorlagen
             del_id = st.selectbox("Vorlage zum Löschen auswählen", options=[None] + [v["id"] for v in vorlagen_liste], format_func=lambda x: "--- Bitte wählen ---" if x is None else next((v["bezeichnung"] for v in vorlagen_liste if v["id"] == x), ""))
             if st.button("🗑️ Ausgewählte Vorlage löschen"):
                 if del_id:

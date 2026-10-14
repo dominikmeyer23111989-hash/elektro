@@ -78,7 +78,7 @@ def generate_rechnung_pdf(rechnung, positionen):
 
 def render_rechnungen_verwaltung(supabase):
     st.title("💶 11. Rechnungs- & Abrechnungsmodul")
-    st.caption("Rechnen Sie Aufträge ab, verwalten Sie Preise und exportieren Sie Rechnungs-PDFs.")
+    st.caption("Rechnen Sie Aufträge ab, übernehmen Sie Lager-Materialien und exportieren Sie Rechnungen als PDF.")
 
     try:
         r_res = supabase.table("rechnungen").select("*").order("erstellt_am", desc=True).execute()
@@ -93,15 +93,16 @@ def render_rechnungen_verwaltung(supabase):
         vorlagen_liste = []
 
     try:
-        # Wir laden ALLE Aufträge, damit keiner wegen abweichendem Status-Text verloren geht
-        a_res = supabase.table("auftraege").select("id, auftragsnummer, freitext_kunde, arbeiten, benoetigtes_material, kunde_unterschrift, mitarbeiter_unterschrift, kunden(vorname, nachname, firma), status").execute()
+        # Alle Aufträge inklusive Kunden-Daten laden
+        a_res = supabase.table("auftraege").select("id, auftragsnummer, freitext_kunde, arbeiten, status, kunden(vorname, nachname, firma)").order("erstellt_am", desc=True).execute()
         alle_auftraege = a_res.data or []
-    except Exception:
+    except Exception as e:
         alle_auftraege = []
+        st.error(f"Fehler beim Laden der Aufträge: {e}")
 
     tabs = st.tabs([
         "📄 Rechnungsübersicht & Filter", 
-        "🚀 Aufträge abrechnen", 
+        "🚀 Aufträge & Lager abrechnen", 
         "⚙️ Standard-Preiskatalog"
     ])
 
@@ -184,11 +185,11 @@ def render_rechnungen_verwaltung(supabase):
                     )
 
     # =========================================================================
-    # TAB 2: AUFTRÄGE ABRECHNEN (ALLE AUFTRÄGE MIT STATUS-ANZEIGE)
+    # TAB 2: AUFTRÄGE & LAGER ABRECHNEN
     # =========================================================================
     with tabs[1]:
-        st.subheader("Aufträge in Rechnung umwandeln")
-        st.caption("Hier sehen Sie alle Aufträge im System. Wählen Sie einen Auftrag aus, um den Arbeitsbericht und alle Lager-Materialien direkt zu übernehmen.")
+        st.subheader("Auftrag & Lager-Material in Rechnung übernehmen")
+        st.caption("Wählen Sie einen Auftrag aus. Die App liest automatisch den Arbeitsbericht und alle im Auftrag gebuchten Lager- / Fremdmaterialien aus.")
 
         if "rechnung_positionen_temp" not in st.session_state:
             st.session_state["rechnung_positionen_temp"] = []
@@ -209,40 +210,44 @@ def render_rechnungen_verwaltung(supabase):
                     k_name_auto = ausgewaehlter_auftrag.get("freitext_kunde", "Kunde")
 
                 st.success(f"Auftrag {ausgewaehlter_auftrag.get('auftragsnummer')} (Status: {ausgewaehlter_auftrag.get('status')}) für Kunde **{k_name_auto}** ausgewählt.")
-                
                 st.write(f"📝 **Arbeitsbericht:** {ausgewaehlter_auftrag.get('arbeiten', '-')}")
 
-                # Lager-Material des Auftrags laden
+                # Lager-Material des Auftrags aus auftrag_material laden
                 try:
                     am_res = supabase.table("auftrag_material").select("*, lager_material(bezeichnung, einheit)").eq("auftrag_id", ausgewaehlter_auftrag["id"]).execute()
                     auftrag_mat = am_res.data or []
-                except Exception:
+                except Exception as e:
                     auftrag_mat = []
+                    st.warning(f"Konnte Lager-Material nicht laden: {e}")
 
-                if st.button("📥 Auftragsdaten, Bericht & Lager-Material in Positionen übernehmen"):
+                if st.button("📥 Arbeitsbericht & verknüpftes Lager-Material in Positionen laden", type="primary"):
                     st.session_state["rechnung_positionen_temp"] = []
                     
-                    # 1. Arbeitsbericht als Leistungsposition
+                    # 1. Arbeitsbericht als Position
                     st.session_state["rechnung_positionen_temp"].append({
                         "beschreibung": f"Arbeitsleistung gem. Auftragsbericht ({ausgewaehlter_auftrag.get('auftragsnummer')}): {ausgewaehlter_auftrag.get('arbeiten', '')}",
                         "menge": 1.0,
                         "einzelpreis_netto": 120.0
                     })
 
-                    # 2. Materialpositionen übernehmen
-                    for am in auftrag_mat:
-                        if am.get("ist_fremdmaterial"):
-                            bez = am.get("freitext_bezeichnung", "Fremdteil")
-                        else:
-                            minfo = am.get("lager_material") or {}
-                            bez = minfo.get("bezeichnung", "Lagerartikel")
-                        
-                        st.session_state["rechnung_positionen_temp"].append({
-                            "beschreibung": f"Material: {bez}",
-                            "menge": float(am.get("menge", 1)),
-                            "einzelpreis_netto": 15.0
-                        })
-                    st.toast("Daten in Rechnung übernommen!", icon="🎯")
+                    # 2. Verknüpfte Lager- & Fremdmaterialien einfügen
+                    if auftrag_mat:
+                        for am in auftrag_mat:
+                            if am.get("ist_fremdmaterial"):
+                                bez = am.get("freitext_bezeichnung", "Fremdteil")
+                            else:
+                                minfo = am.get("lager_material") or {}
+                                bez = minfo.get("bezeichnung", "Lagerartikel")
+                            
+                            st.session_state["rechnung_positionen_temp"].append({
+                                "beschreibung": f"Material: {bez}",
+                                "menge": float(am.get("menge", 1)),
+                                "einzelpreis_netto": 15.0 # Startpreis zum Anpassen
+                            })
+                        st.success(f"{len(auftrag_mat)} Material-Position(en) aus dem Lager erfolgreich übernommen!")
+                    else:
+                        st.info("Dieser Auftrag hat keine verknüpften Lager-Materialien in 'auftrag_material'.")
+                    
                     st.rerun()
 
         st.markdown("---")

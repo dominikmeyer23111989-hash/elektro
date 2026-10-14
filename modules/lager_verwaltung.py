@@ -105,7 +105,7 @@ def hat_recht(modul_id, aktion="sehen"):
 
 def render_lager_verwaltung(supabase):
     st.title("📦 5. Lager- & Materialverwaltung")
-    st.caption("High-Speed Lager: Turbo-Scan, Warenkorb, Sidebar-Warnungen, Logs & PDF-Export.")
+    st.caption("High-Speed Lager: Turbo-Scan, Warenkorb, Sidebar-Warnungen, unterbrechbare Inventur & Logs.")
 
     if not hat_recht("2", "sehen"):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
@@ -138,6 +138,10 @@ def render_lager_verwaltung(supabase):
 
     if "last_foto_id" not in st.session_state:
         st.session_state["last_foto_id"] = None
+
+    # Inventur-Zustand initialisieren, damit er bei Unterbrechungen erhalten bleibt
+    if "inventur_fortschritt" not in st.session_state:
+        st.session_state["inventur_fortschritt"] = {}
 
     tabs = st.tabs([
         "📊 Bestandsübersicht", 
@@ -517,10 +521,10 @@ def render_lager_verwaltung(supabase):
                     else:
                         st.error("Keine Berechtigung.")
 
-    # --- TAB 6: INVENTUR ---
+    # --- TAB 6: INVENTUR (Unterbrechbar & Zwischenspeicherbar) ---
     with tabs[5]:
-        st.subheader("📋 Systematische Inventur")
-        st.caption("Vergleichen Sie den aktuellen System-Ist-Bestand mit dem Mindest-Soll und tragen Sie den gezählten Ist-Bestand ein.")
+        st.subheader("📋 Systematische Inventur (Unterbrechbar)")
+        st.caption("Zählen Sie Ihr Lager in Etappen. Ihre Eingaben werden automatisch gemerkt. Sie können den Zählstand auch als Entwurf exportieren und am nächsten Tag fortsetzen!")
         
         letzte_inventur_datum = "Noch nie durchgeführt"
         try:
@@ -540,41 +544,82 @@ def render_lager_verwaltung(supabase):
         elif not darf_bearbeiten:
             st.error("⛔ Keine Berechtigung.")
         else:
-            inventur_pdf_daten = []
-            with st.form("inventur_form"):
-                inventur_daten = {}
-                
-                h1, h2, h3, h4 = st.columns([2, 1, 1, 2])
-                with h1:
-                    st.markdown("**Artikel & Ort**")
-                with h2:
-                    st.markdown("**System-Ist**")
-                with h3:
-                    st.markdown("**Mindest-Soll**")
-                with h4:
-                    st.markdown("**Gezählter Ist-Bestand**")
+            # Import / Export von Zähl-Entwürfen für mehrtägige Unterbrechungen
+            col_ent1, col_ent2 = st.columns(2)
+            with col_ent1:
+                # Aktuellen Zwischenstand exportieren
+                entwurf_export_liste = []
+                for m in material_liste:
+                    val = st.session_state.get(f"inv_val_{m['id']}", m.get('ist_bestand', 0))
+                    entwurf_export_liste.append({"artikelnummer": m.get('artikelnummer'), "bezeichnung": m.get('bezeichnung'), "gezählter_ist": val})
+                df_entwurf = pd.DataFrame(entwurf_export_liste)
+                csv_entwurf = df_entwurf.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="💾 Aktuellen Zähl-Entwurf exportieren",
+                    data=csv_entwurf,
+                    file_name=f"Inventur_Entwurf_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                    mime="text/csv",
+                    help="Speichern Sie Ihren Stand, wenn Sie die Inventur aufteilen oder unterbrechen möchten."
+                )
+            with col_ent2:
+                # Entwurf wieder importieren
+                uploaded_entwurf = st.file_uploader("📂 Zähl-Entwurf hochladen (Fortsetzen)", type=["csv"], key="upload_inventur_entwurf")
+                if uploaded_entwurf is not None:
+                    try:
+                        df_up = pd.read_csv(uploaded_entwurf)
+                        for _, row in df_up.iterrows():
+                            art_nr = str(row.get('artikelnummer'))
+                            gez_wert = int(row.get('gezählter_ist', 0))
+                            mat_match = next((m for m in material_liste if str(m.get('artikelnummer')) == art_nr), None)
+                            if mat_match:
+                                st.session_state[f"inv_val_{mat_match['id']}"] = gez_wert
+                        st.toast("✅ Zähl-Entwurf erfolgreich geladen!", icon="📂")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler beim Laden des Entwurfs: {e}")
+
+            st.markdown("---")
+
+            # Tabellenkopf
+            h1, h2, h3, h4 = st.columns([2, 1, 1, 2])
+            with h1:
+                st.markdown("**Artikel & Ort**")
+            with h2:
+                st.markdown("**System-Ist**")
+            with h3:
+                st.markdown("**Mindest-Soll**")
+            with h4:
+                st.markdown("**Gezählter Ist-Bestand**")
+            st.divider()
+
+            inventur_daten = {}
+            for m in material_liste:
+                col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
+                with col1:
+                    st.markdown(f"**{m.get('bezeichnung')}**<br>📍 `{m.get('lagerort', 'Kein Ort')}`", unsafe_allow_html=True)
+                with col2:
+                    st.markdown(f"**{m.get('ist_bestand', 0)}** {m.get('einheit', 'Stk.')}")
+                with col3:
+                    st.markdown(f"{m.get('soll_bestand', 0)} {m.get('einheit', 'Stk.')}")
+                with col4:
+                    # Wert aus Session holen oder mit System-Ist vorbelegen
+                    key_str = f"inv_val_{m['id']}"
+                    if key_str not in st.session_state:
+                        st.session_state[key_str] = int(m.get('ist_bestand', 0))
+                    
+                    gezahlt = st.number_input(
+                        "Ist", 
+                        min_value=0, 
+                        value=st.session_state[key_str], 
+                        key=key_str, 
+                        label_visibility="collapsed"
+                    )
+                    inventur_daten[m['id']] = gezahlt
                 st.divider()
 
-                for m in material_liste:
-                    col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
-                    with col1:
-                        st.markdown(f"**{m.get('bezeichnung')}**<br>📍 `{m.get('lagerort', 'Kein Ort')}`", unsafe_allow_html=True)
-                    with col2:
-                        st.markdown(f"**{m.get('ist_bestand', 0)}** {m.get('einheit', 'Stk.')}")
-                    with col3:
-                        st.markdown(f"{m.get('soll_bestand', 0)} {m.get('einheit', 'Stk.')}")
-                    with col4:
-                        gezahlt = st.number_input(
-                            "Ist", 
-                            min_value=0, 
-                            value=int(m.get('ist_bestand', 0)), 
-                            key=f"inv_{m['id']}", 
-                            label_visibility="collapsed"
-                        )
-                        inventur_daten[m['id']] = gezahlt
-                    st.divider()
-
-                if st.form_submit_button("✅ Inventur finalisieren & Ist-Bestände aktualisieren", type="primary", use_container_width=True):
+            col_fin1, col_fin2 = st.columns(2)
+            with col_fin1:
+                if st.button("✅ Inventur finalisieren & Bestände buchen", type="primary", use_container_width=True):
                     try:
                         user_data = st.session_state.get("user_data", {})
                         current_user = user_data.get("name") or user_data.get("benutzername") or user_data.get("username") or "Admin"
@@ -591,15 +636,29 @@ def render_lager_verwaltung(supabase):
                                 "kommentar": inventur_kommentar
                             }).execute()
 
-                        st.toast("Inventur erfolgreich abgeschlossen & Ist-Bestände aktualisiert!", icon="🎯")
+                        # Entwurf nach erfolgreicher Buchung leeren
+                        for m in material_liste:
+                            k = f"inv_val_{m['id']}"
+                            if k in st.session_state:
+                                del st.session_state[k]
+
+                        st.toast("Inventur erfolgreich abgeschlossen & Bestände aktualisiert!", icon="🎯")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Fehler: {e}")
 
-            # PDF-Export für die Inventurliste (mit den live eingegebenen Werten)
+            with col_fin2:
+                if st.button("🗑️ Zähl-Entwurf zurücksetzen", use_container_width=True):
+                    for m in material_liste:
+                        st.session_state[f"inv_val_{m['id']}"] = int(m.get('ist_bestand', 0))
+                    st.toast("Zählstand auf System-Ist zurückgesetzt.", icon="🔄")
+                    st.rerun()
+
+            # PDF-Export für die Inventurliste
             st.markdown("---")
+            inventur_pdf_daten = []
             for m in material_liste:
-                gezahlt_wert = st.session_state.get(f"inv_{m['id']}", m.get('ist_bestand', 0))
+                gezahlt_wert = st.session_state.get(f"inv_val_{m['id']}", m.get('ist_bestand', 0))
                 inventur_pdf_daten.append([
                     str(m.get('artikelnummer', '-')),
                     str(m.get('bezeichnung', '')),

@@ -174,9 +174,32 @@ def generate_rechnung_pdf(rechnung, positionen, auftrag_rec=None, stammdaten=Non
 
     return pdf.output()
 
+def hat_recht(modul_id, aktion="sehen"):
+    """Prüft anhand der in der DB hinterlegten rollen['erlaubte_menues'], ob die Aktion erlaubt ist."""
+    user = st.session_state.get("user_data", {})
+    
+    # Rollen-Objekt aus der Datenbank prüfen
+    rollen_obj = user.get("rollen") or {}
+    erlaubte_menues = rollen_obj.get("erlaubte_menues", [])
+    
+    # Fallback für alte Rechte-Listen oder Admin-Rollen
+    if not erlaubte_menues:
+        alte_rechte = user.get("rechte", [])
+        if f"{modul_id}_{aktion}" in alte_rechte or user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+            return True
+        return False
+
+    return f"{modul_id}_{aktion}" in erlaubte_menues
+
 def render_rechnungen_verwaltung(supabase):
     st.title("💶 11. Rechnungs- & Abrechnungsmodul")
     st.caption("Verwalten Sie Firmenstammdaten, den Preiskatalog und erstellen Sie professionelle Rechnungen.")
+
+    if not hat_recht("11", "sehen"):
+        st.error("⛔ Sie haben keine Berechtigung, das Rechnungsmodul aufzurufen.")
+        return
+
+    darf_bearbeiten = hat_recht("11", "bearbeiten")
 
     # 1. Firmenstammdaten laden
     try:
@@ -286,8 +309,8 @@ def render_rechnungen_verwaltung(supabase):
                         st.write(f"**Rechnungsdatum:** {r.get('rechnungs_datum')}")
                         st.write(f"**MwSt.-Satz:** {r.get('mwst_satz')}%")
                     with col_det2:
-                        neuer_status = st.selectbox("Status ändern", ["Offen", "Bezahlt", "Storniert"], index=["Offen", "Bezahlt", "Storniert"].index(status) if status in ["Offen", "Bezahlt", "Storniert"] else 0, key=f"status_sel_{r['id']}")
-                        if neuer_status != status:
+                        neuer_status = st.selectbox("Status ändern", ["Offen", "Bezahlt", "Storniert"], index=["Offen", "Bezahlt", "Storniert"].index(status) if status in ["Offen", "Bezahlt", "Storniert"] else 0, key=f"status_sel_{r['id']}", disabled=not darf_bearbeiten)
+                        if darf_bearbeiten and neuer_status != status:
                             try:
                                 supabase.table("rechnungen").update({"status": neuer_status}).eq("id", r["id"]).execute()
                                 st.toast("Status aktualisiert!", icon="✅")
@@ -387,7 +410,7 @@ def render_rechnungen_verwaltung(supabase):
                     else:
                         st.info("ℹ️ Keine Lager-Materialien direkt an diesen Auftrag gekoppelt.")
 
-                if st.button("📥 Obige Auftragsdaten & Material in Rechnungspositionen übernehmen", type="primary"):
+                if darf_bearbeiten and st.button("📥 Obige Auftragsdaten & Material in Rechnungspositionen übernehmen", type="primary"):
                     st.session_state["rechnung_positionen_temp"] = []
                     
                     st.session_state["rechnung_positionen_temp"].append({
@@ -442,7 +465,7 @@ def render_rechnungen_verwaltung(supabase):
         with col_kat2:
             st.write("")
             st.write("")
-            if st.button("➕ Katalogartikel hinzufügen", use_container_width=True):
+            if darf_bearbeiten and st.button("➕ Katalogartikel hinzufügen", use_container_width=True):
                 if sel_katalog_item:
                     item_data = sel_katalog_item["item"]
                     bez = item_data["bezeichnung"]
@@ -463,7 +486,7 @@ def render_rechnungen_verwaltung(supabase):
         with col_p3:
             p_preis = st.number_input("Netto-Preis (EUR)", min_value=0.0, value=65.0, step=5.0, key="frei_preis_inp")
 
-        if st.button("➕ Freie Position hinzufügen", use_container_width=True):
+        if darf_bearbeiten and st.button("➕ Freie Position hinzufügen", use_container_width=True):
             if p_beschr.strip():
                 st.session_state["rechnung_positionen_temp"].append({
                     "beschreibung": p_beschr.strip(),
@@ -480,7 +503,7 @@ def render_rechnungen_verwaltung(supabase):
                 c_p1.write(f"**{p['beschreibung']}**")
                 c_p2.write(f"{p['menge']} Stk./Std.")
                 c_p3.write(f"{p['einzelpreis_netto']:.2f} EUR netto")
-                if c_p4.button("🗑️", key=f"del_pos_{idx}"):
+                if darf_bearbeiten and c_p4.button("🗑️", key=f"del_pos_{idx}"):
                     idx_to_del = idx
 
             if idx_to_del is not None:
@@ -493,14 +516,14 @@ def render_rechnungen_verwaltung(supabase):
             col1, col2 = st.columns(2)
             with col1:
                 default_r_nr = f"RE-{datetime.now().strftime('%Y%m%d')}-01"
-                r_nummer = st.text_input("Rechnungsnummer *", value=default_r_nr)
-                r_kunde = st.text_input("Kundenname / Firma *", value=k_name_auto if 'k_name_auto' in locals() else "", placeholder="z. B. Hans Müller")
+                r_nummer = st.text_input("Rechnungsnummer *", value=default_r_nr, disabled=not darf_bearbeiten)
+                r_kunde = st.text_input("Kundenname / Firma *", value=k_name_auto if 'k_name_auto' in locals() else "", placeholder="z. B. Hans Müller", disabled=not darf_bearbeiten)
             with col2:
-                r_mwst = st.number_input("Mehrwertsteuersatz (%)", min_value=0.0, value=19.0, step=0.5)
+                r_mwst = st.number_input("Mehrwertsteuersatz (%)", min_value=0.0, value=19.0, step=0.5, disabled=not darf_bearbeiten)
 
-            submitted_rechnung = st.form_submit_button("💾 Rechnung speichern & ausstellen", type="primary", use_container_width=True)
+            submitted_rechnung = st.form_submit_button("💾 Rechnung speichern & ausstellen", type="primary", use_container_width=True, disabled=not darf_bearbeiten)
 
-            if submitted_rechnung:
+            if submitted_rechnung and darf_bearbeiten:
                 if not r_nummer.strip() or not r_kunde.strip():
                     st.warning("Bitte Rechnungsnummer und Kundenname angeben.")
                 elif not st.session_state["rechnung_positionen_temp"]:
@@ -558,11 +581,11 @@ def render_rechnungen_verwaltung(supabase):
                         with col_lp2:
                             st.write(f"Einheit: {mat.get('einheit', 'Stk.')}")
                         with col_lp3:
-                             neuer_kat_preis = st.number_input("Netto-Preis (EUR)", min_value=0.0, value=aktiver_preis, step=1.0, key=f"input_p_{m_id}", label_visibility="collapsed")
+                             neuer_kat_preis = st.number_input("Netto-Preis (EUR)", min_value=0.0, value=aktiver_preis, step=1.0, key=f"input_p_{m_id}", label_visibility="collapsed", disabled=not darf_bearbeiten)
                         with col_lp4:
-                            b_save_p = st.form_submit_button("💾 Speichern", use_container_width=True)
+                            b_save_p = st.form_submit_button("💾 Speichern", use_container_width=True, disabled=not darf_bearbeiten)
 
-                        if b_save_p:
+                        if b_save_p and darf_bearbeiten:
                             try:
                                 if existierende_vorlage:
                                     supabase.table("rechnung_vorlagen").update({"einzelpreis_netto": neuer_kat_preis, "einheit": mat.get('einheit', 'Stk.')}).eq("id", existierende_vorlage["id"]).execute()
@@ -576,17 +599,17 @@ def render_rechnungen_verwaltung(supabase):
         with tab_kat_allg:
             st.markdown("##### ➕ Neue allgemeine Vorlage anlegen")
             with st.form("neue_vorlage_form"):
-                v_bech_frei = st.text_input("Bezeichnung *", placeholder="z. B. Monteurstunde Standard")
+                v_bech_frei = st.text_input("Bezeichnung *", placeholder="z. B. Monteurstunde Standard", disabled=not darf_bearbeiten)
                 col_v1, col_v2, col_v3 = st.columns(3)
                 with col_v1:
-                    v_kat = st.selectbox("Kategorie", verfuegbare_kategorien)
+                    v_kat = st.selectbox("Kategorie", verfuegbare_kategorien, disabled=not darf_bearbeiten)
                 with col_v2:
-                    v_einh = st.selectbox("Einheit", verfuegbare_einheiten)
+                    v_einh = st.selectbox("Einheit", verfuegbare_einheiten, disabled=not darf_bearbeiten)
                 with col_v3:
-                    v_preis = st.number_input("Nettopreis (EUR) *", min_value=0.0, value=65.0, step=5.0)
+                    v_preis = st.number_input("Nettopreis (EUR) *", min_value=0.0, value=65.0, step=5.0, disabled=not darf_bearbeiten)
 
-                btn_save_vorl = st.form_submit_button("➕ Allgemeine Vorlage speichern", type="primary", use_container_width=True)
-                if btn_save_vorl and v_bech_frei.strip():
+                btn_save_vorl = st.form_submit_button("➕ Allgemeine Vorlage speichern", type="primary", use_container_width=True, disabled=not darf_bearbeiten)
+                if btn_save_vorl and darf_bearbeiten and v_bech_frei.strip():
                     try:
                         supabase.table("rechnung_vorlagen").insert({"bezeichnung": v_bech_frei.strip(), "kategorie": v_kat, "einheit": v_einh, "einzelpreis_netto": v_preis, "material_id": None}).execute()
                         st.success("Vorlage gespeichert!")
@@ -603,39 +626,32 @@ def render_rechnungen_verwaltung(supabase):
                     selected_v = next((v for v in freie_vorlagen if v["id"] == edit_sel_id), None)
                     if selected_v:
                         with st.form(f"form_edit_vorlage_{edit_sel_id}"):
-                            ed_bez = st.text_input("Bezeichnung", value=selected_v.get("bezeichnung", ""))
+                            ed_bez = st.text_input("Bezeichnung", value=selected_v.get("bezeichnung", ""), disabled=not darf_bearbeiten)
                             
                             current_kat = selected_v.get("kategorie", "Arbeitszeit")
                             kats_bearb = list(verfuegbare_kategorien)
                             if current_kat not in kats_bearb:
                                 kats_bearb.append(current_kat)
-                            ed_kat = st.selectbox("Kategorie", kats_bearb, index=kats_bearb.index(current_kat))
+                            ed_kat = st.selectbox("Kategorie", kats_bearb, index=kats_bearb.index(current_kat), disabled=not darf_bearbeiten)
 
                             current_einh = selected_v.get("einheit", "Std.")
                             einh_bearb = list(verfuegbare_einheiten)
                             if current_einh not in einh_bearb:
                                 einh_bearb.append(current_einh)
-                            ed_einh = st.selectbox("Einheit", einh_bearb, index=einh_bearb.index(current_einh))
+                            ed_einh = st.selectbox("Einheit", einh_bearb, index=einh_bearb.index(current_einh), disabled=not darf_bearbeiten)
 
-                            ed_preis = st.number_input("Nettopreis (EUR)", min_value=0.0, value=float(selected_v.get("einzelpreis_netto", 0.0)), step=5.0)
+                            ed_preis = st.number_input("Nettopreis (EUR)", min_value=0.0, value=float(selected_v.get("einzelpreis_netto", 0.0)), step=5.0, disabled=not darf_bearbeiten)
                             
-                            col_e1, col_e2 = st.columns(2)
-                            with col_e1:
-                                btn_update = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True)
-                            with col_e2:
-                                btn_delete = st.form_submit_button("🗑️ Vorlage löschen", use_container_width=True)
-                                
-                            if btn_update:
+                            btn_update = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True, disabled=not darf_bearbeiten)
+                            if btn_update and darf_bearbeiten:
                                 try:
-                                    supabase.table("rechnung_vorlagen").update({"bezeichnung": ed_bez.strip(), "kategorie": ed_kat, "einheit": ed_einh, "einzelpreis_netto": ed_preis}).eq("id", edit_sel_id).execute()
+                                    supabase.table("rechnung_vorlagen").update({
+                                        "bezeichnung": ed_bez,
+                                        "kategorie": ed_kat,
+                                        "einheit": ed_einh,
+                                        "einzelpreis_netto": ed_preis
+                                    }).eq("id", edit_sel_id).execute()
                                     st.success("Vorlage aktualisiert!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Fehler: {e}")
-                            if btn_delete:
-                                try:
-                                    supabase.table("rechnung_vorlagen").delete().eq("id", edit_sel_id).execute()
-                                    st.success("Vorlage gelöscht!")
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Fehler: {e}")
@@ -644,68 +660,58 @@ def render_rechnungen_verwaltung(supabase):
     # TAB 4: FIRMENSTAMMDATEN & LOGO
     # =========================================================================
     with tabs[3]:
-        st.subheader("🏢 Firmenstammdaten, Bankverbindung & Logo")
-        st.caption("Diese Angaben erscheinen automatisch im Kopf- und Fußbereich aller generierten Rechnungs-PDFs.")
+        st.subheader("🏢 Firmenstammdaten & Logo für Rechnungs-PDFs")
+        st.caption("Diese Daten erscheinen automatisch im Briefkopf sowie in der Fußzeile Ihrer erstellten Rechnungen.")
 
-        with st.form("form_firmenstammdaten"):
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                f_name = st.text_input("Firmenname *", value=stammdaten.get("firmenname", "Elektro Enterprise GmbH"))
-                f_inh = st.text_input("Inhaber / Geschäftsführer", value=stammdaten.get("inhaber", ""))
-                f_str = st.text_input("Straße & Hausnummer", value=stammdaten.get("strasse", ""))
-                f_plz = st.text_input("PLZ & Ort", value=stammdaten.get("plz_ort", ""))
-                f_tel = st.text_input("Telefonnummer", value=stammdaten.get("telefon", ""))
-                f_email = st.text_input("E-Mail-Adresse", value=stammdaten.get("email", ""))
+        with st.form("firmenstammdaten_form"):
+            col_fs1, col_fs2 = st.columns(2)
+            with col_fs1:
+                fs_firma = st.text_input("Firmenname", value=stammdaten.get("firmenname", ""), disabled=not darf_bearbeiten)
+                fs_inhaber = st.text_input("Inhaber / Geschäftsführung", value=stammdaten.get("inhaber", ""), disabled=not darf_bearbeiten)
+                fs_strasse = st.text_input("Straße & Hausnummer", value=stammdaten.get("strasse", ""), disabled=not darf_bearbeiten)
+                fs_plz_ort = st.text_input("PLZ & Ort", value=stammdaten.get("plz_ort", ""), disabled=not darf_bearbeiten)
+                fs_telefon = st.text_input("Telefonnummer", value=stammdaten.get("telefon", ""), disabled=not darf_bearbeiten)
+                fs_email = st.text_input("E-Mail-Adresse", value=stammdaten.get("email", ""), disabled=not darf_bearbeiten)
+            with col_fs2:
+                fs_bank = st.text_input("Bankname", value=stammdaten.get("bankname", ""), disabled=not darf_bearbeiten)
+                fs_iban = st.text_input("IBAN", value=stammdaten.get("iban", ""), disabled=not darf_bearbeiten)
+                fs_bic = st.text_input("BIC", value=stammdaten.get("bic", ""), disabled=not darf_bearbeiten)
+                fs_steuer = st.text_input("Steuernummer", value=stammdaten.get("steuernummer", ""), disabled=not darf_bearbeiten)
+                fs_ustid = st.text_input("Umsatzsteuer-ID (Ust-ID)", value=stammdaten.get("ust_id", ""), disabled=not darf_bearbeiten)
 
-            with col_f2:
-                f_bank = st.text_input("Bankverbindung (Bankname)", value=stammdaten.get("bankname", ""))
-                f_iban = st.text_input("IBAN", value=stammdaten.get("iban", ""))
-                f_bic = st.text_input("BIC", value=stammdaten.get("bic", ""))
-                f_stnr = st.text_input("Steuernummer", value=stammdaten.get("steuernummer", ""))
-                f_ustid = st.text_input("USt-IdNr.", value=stammdaten.get("ust_id", ""))
-
-            st.markdown("---")
-            st.markdown("##### 🖼️ Firmenlogo für Rechnungs-Kopfzeile")
+            fs_fuss = st.text_area("Standard-Fußzeilentext / Zahlungsbedingungen", value=stammdaten.get("fusszeile_freitext", "Zahlungsziel: 14 Tage netto ohne Abzug."), disabled=not darf_bearbeiten)
             
-            logo_aktuell = stammdaten.get("logo_base64")
-            if logo_aktuell:
-                st.image(logo_aktuell, caption="Aktuelles Rechnungs-Logo", width=200)
+            st.markdown("##### Firmenlogo hochladen (PNG / JPG)")
+            fs_logo_file = st.file_uploader("Logo für PDF-Briefkopf", type=["png", "jpg", "jpeg"], disabled=not darf_bearbeiten)
 
-            uploaded_logo = st.file_uploader("Neues Logo hochladen (PNG oder JPG)", type=["png", "jpg", "jpeg"])
-            
-            new_logo_b64 = logo_aktuell
-            if uploaded_logo:
-                bytes_data = uploaded_logo.getvalue()
-                encoded = base64.b64encode(bytes_data).decode('utf-8')
-                mime_type = uploaded_logo.type
-                new_logo_b64 = f"data:{mime_type};base64,{encoded}"
-                st.image(bytes_data, caption="Vorschau neues Logo", width=200)
+            btn_save_stammdaten = st.form_submit_button("💾 Firmenstammdaten speichern", type="primary", use_container_width=True, disabled=not darf_bearbeiten)
 
-            st.markdown("---")
-            f_fuss = st.text_area("Standard-Text unter Rechnungen (Zahlungsziel, Dankeschön)", value=stammdaten.get("fusszeile_freitext", "Vielen Dank für Ihren Auftrag! Bitte überweisen Sie den Rechnungsbetrag innerhalb von 14 Tagen."), height=80)
-
-            btn_save_stamm = st.form_submit_button("💾 Firmenstammdaten & Logo speichern", type="primary", use_container_width=True)
-
-            if btn_save_stamm:
+            if btn_save_stammdaten and darf_bearbeiten:
                 try:
+                    logo_base64_val = stammdaten.get("logo_base64")
+                    if fs_logo_file is not None:
+                        bytes_data = fs_logo_file.getvalue()
+                        logo_base64_val = "data:image/png;base64," + base64.b64encode(bytes_data).decode()
+
                     payload = {
                         "id": 1,
-                        "firmenname": f_name.strip(),
-                        "inhaber": f_inh.strip(),
-                        "strasse": f_str.strip(),
-                        "plz_ort": f_plz.strip(),
-                        "telefon": f_tel.strip(),
-                        "email": f_email.strip(),
-                        "bankname": f_bank.strip(),
-                        "iban": f_iban.strip(),
-                        "bic": f_bic.strip(),
-                        "steuernummer": f_stnr.strip(),
-                        "ust_id": f_ustid.strip(),
-                        "logo_base64": new_logo_b64,
-                        "fusszeile_freitext": f_fuss.strip()
+                        "firmenname": fs_firma,
+                        "inhaber": fs_inhaber,
+                        "strasse": fs_strasse,
+                        "plz_ort": fs_plz_ort,
+                        "telefon": fs_telefon,
+                        "email": fs_email,
+                        "bankname": fs_bank,
+                        "iban": fs_iban,
+                        "bic": fs_bic,
+                        "steuernummer": fs_steuer,
+                        "ust_id": fs_ustid,
+                        "fusszeile_freitext": fs_fuss,
+                        "logo_base64": logo_base64_val
                     }
+
                     supabase.table("firmenstammdaten").upsert(payload).execute()
-                    st.toast("Firmenstammdaten & Logo erfolgreich gespeichert!", icon="🏢")
+                    st.success("Firmenstammdaten erfolgreich aktualisiert!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Fehler beim Speichern der Stammdaten: {e}")

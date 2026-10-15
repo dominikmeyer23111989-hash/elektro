@@ -199,7 +199,6 @@ def render_rechnungen_verwaltung(supabase):
                 except Exception:
                     positionen = []
 
-                # Zugehörigen Auftrag laden, falls vorhanden
                 auftrag_rec = None
                 if r.get("auftrag_id"):
                     try:
@@ -328,14 +327,12 @@ def render_rechnungen_verwaltung(supabase):
                 if st.button("📥 Obige Auftragsdaten & Material in Rechnungspositionen übernehmen", type="primary"):
                     st.session_state["rechnung_positionen_temp"] = []
                     
-                    # 1. Arbeitsbericht als Position
                     st.session_state["rechnung_positionen_temp"].append({
                         "beschreibung": f"Arbeitsleistung gem. Auftragsbericht ({ausgewaehlter_auftrag.get('auftragsnummer')}): {ausgewaehlter_auftrag.get('arbeiten', '')}",
                         "menge": 1.0,
                         "einzelpreis_netto": 120.0
                     })
 
-                    # 2. Materialpositionen übernehmen
                     if auftrag_mat:
                         for am in auftrag_mat:
                             if am.get("ist_fremdmaterial"):
@@ -496,38 +493,42 @@ def render_rechnungen_verwaltung(supabase):
     # =========================================================================
     with tabs[2]:
         st.subheader("⚙️ Zentraler Preiskatalog & Stammdaten")
-        st.caption("Legen Sie hier alle Verkaufspreise fest und pflegen Sie Ihre allgemeinen Vorlagen.")
+        st.caption("Legen Sie hier alle Verkaufspreise fest und pflegen Sie Ihre Vorlagen.")
 
         tab_kat_lager, tab_kat_allg = st.tabs(["📦 Lager-Artikel Preise", "📋 Allgemeine Vorlagen"])
 
         # --- SUB-TAB 1: LAGER-ARTIKEL PREISE ---
         with tab_kat_lager:
-            st.markdown("##### Feste Verkaufspreise für Ihre Lagerartikel definieren")
+            st.markdown("##### Feste Verkaufspreise & Kategorien für Lagerartikel definieren")
             if not lager_material_liste:
                 st.info("Keine Artikel im Lager vorhanden.")
             else:
+                kats_lager_optionen = ["Material", "Arbeitszeit", "Pauschale", "Sonstiges"]
                 for mat in lager_material_liste:
                     m_id = mat["id"]
                     existierende_vorlage = vorlagen_lager_map.get(str(m_id))
                     aktiver_preis = float(existierende_vorlage["einzelpreis_netto"]) if existierende_vorlage else 0.0
+                    aktive_kat = existierende_vorlage.get("kategorie", "Material") if existierende_vorlage else "Material"
+                    kat_idx = kats_lager_optionen.index(aktive_kat) if aktive_kat in kats_lager_optionen else 0
 
                     with st.form(f"form_lager_preis_{m_id}"):
-                        col_lp1, col_lp2, col_lp3, col_lp4 = st.columns([3, 1, 2, 1])
+                        col_lp1, col_lp2, col_lp3, col_lp4 = st.columns([2, 1, 1, 1])
                         with col_lp1:
                             st.write(f"**{mat['bezeichnung']}**")
                             st.caption(f"Art-Nr: {mat.get('artikelnummer', '-')} | Bestand: {mat.get('ist_bestand', 0)} {mat.get('einheit', 'Stk.')}")
                         with col_lp2:
-                            st.write(f"Einheit: {mat.get('einheit', 'Stk.')}")
+                            neue_kat = st.selectbox("Kategorie", kats_lager_optionen, index=kat_idx, key=f"kat_sel_{m_id}")
                         with col_lp3:
                              neuer_kat_preis = st.number_input(
-                                "Netto-Verkaufspreis (€)",
+                                "Netto-Preis (€)",
                                 min_value=0.0,
                                 value=aktiver_preis,
                                 step=1.0,
-                                key=f"input_p_{m_id}",
-                                label_visibility="collapsed"
+                                key=f"input_p_{m_id}"
                             )
                         with col_lp4:
+                            st.write("")
+                            st.write("")
                             b_save_p = st.form_submit_button("💾 Speichern", use_container_width=True)
 
                         if b_save_p:
@@ -535,12 +536,13 @@ def render_rechnungen_verwaltung(supabase):
                                 if existierende_vorlage:
                                     supabase.table("rechnung_vorlagen").update({
                                         "einzelpreis_netto": neuer_kat_preis,
+                                        "kategorie": neue_kat,
                                         "einheit": mat.get('einheit', 'Stk.')
                                     }).eq("id", existierende_vorlage["id"]).execute()
                                 else:
                                     supabase.table("rechnung_vorlagen").insert({
                                         "bezeichnung": mat["bezeichnung"],
-                                        "kategorie": "Material",
+                                        "kategorie": neue_kat,
                                         "einheit": mat.get('einheit', 'Stk.'),
                                         "einzelpreis_netto": neuer_kat_preis,
                                         "material_id": m_id
@@ -550,14 +552,14 @@ def render_rechnungen_verwaltung(supabase):
                             except Exception as e:
                                 st.error(f"Fehler: {e}")
 
-        # --- SUB-TAB 2: ALLGEMEINE VORLAGEN (NEU MIT BEARBEITUNGS- & KATEGORIE-FUNKTION) ---
+        # --- SUB-TAB 2: ALLGEMEINE VORLAGEN ---
         with tab_kat_allg:
             st.markdown("##### ➕ Neue allgemeine Vorlage anlegen")
             with st.form("neue_vorlage_form"):
                 v_bech_frei = st.text_input("Bezeichnung *", placeholder="z. B. Monteurstunde Standard oder Anfahrtspauschale")
                 col_v1, col_v2, col_v3 = st.columns(3)
                 with col_v1:
-                    v_kat = st.selectbox("Kategorie", ["Arbeitszeit", "Pauschale", "Sonstiges"])
+                    v_kat = st.selectbox("Kategorie", ["Arbeitszeit", "Material", "Pauschale", "Sonstiges"])
                 with col_v2:
                     v_einh = st.text_input("Einheit", value="Std.")
                 with col_v3:
@@ -598,7 +600,7 @@ def render_rechnungen_verwaltung(supabase):
                             st.write(f"**Bearbeite Vorlage:** {selected_v['bezeichnung']}")
                             ed_bez = st.text_input("Bezeichnung", value=selected_v.get("bezeichnung", ""))
                             
-                            kats = ["Arbeitszeit", "Pauschale", "Sonstiges"]
+                            kats = ["Arbeitszeit", "Material", "Pauschale", "Sonstiges"]
                             current_kat = selected_v.get("kategorie", "Arbeitszeit")
                             kat_idx = kats.index(current_kat) if current_kat in kats else 0
                             ed_kat = st.selectbox("Kategorie", kats, index=kat_idx)

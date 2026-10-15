@@ -10,3 +10,4 @@ pyzbar
 opencv-python-headless
 qrcode
 reportlab
+streamlit-cookies-controller

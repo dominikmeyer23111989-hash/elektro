@@ -7,15 +7,21 @@ import base64
 import tempfile
 import os
 
+def clean_text(text):
+    if not text:
+        return "-"
+    # Ersetze Sonderzeichen, die FPDF (Latin-1) nicht darstellen kann
+    txt_str = str(text).replace("€", "EUR").replace("•", "-")
+    return txt_str.encode('latin-1', 'replace').decode('latin-1')
+
 class RechnungsPDF(FPDF):
     def __init__(self, stammdaten=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.stammdaten = stammdaten or {}
 
     def header(self):
-        # 1. Logo oben rechts/links einbinden
+        # 1. Logo oben rechts einbinden
         logo_b64 = self.stammdaten.get("logo_base64")
-        has_logo = False
         if logo_b64:
             try:
                 if "," in logo_b64:
@@ -25,10 +31,8 @@ class RechnungsPDF(FPDF):
                     tmp.write(img_data)
                     tmp_logo_path = tmp.name
                 
-                # Logo oben rechts positionieren (Breite z.B. 45mm)
                 self.image(tmp_logo_path, x=145, y=10, w=50)
                 os.unlink(tmp_logo_path)
-                has_logo = True
             except Exception:
                 pass
 
@@ -39,7 +43,7 @@ class RechnungsPDF(FPDF):
         
         self.set_font('Helvetica', '', 8)
         self.set_text_color(100, 100, 100)
-        absender_zeile = f"{fname} • {self.stammdaten.get('strasse', '')} • {self.stammdaten.get('plz_ort', '')}"
+        absender_zeile = f"{fname} - {self.stammdaten.get('strasse', '')} - {self.stammdaten.get('plz_ort', '')}"
         self.cell(120, 4, clean_text(absender_zeile), border=False, new_x="LMARGIN", new_y="NEXT")
         
         self.set_text_color(0, 0, 0)
@@ -63,11 +67,6 @@ class RechnungsPDF(FPDF):
         self.multi_cell(60, 3.5, clean_text(col2), border=0, align='L')
         self.set_xy(140, y_start)
         self.multi_cell(55, 3.5, clean_text(col3), border=0, align='R')
-
-def clean_text(text):
-    if not text:
-        return "-"
-    return str(text).encode('latin-1', 'replace').decode('latin-1')
 
 def add_signature_to_pdf(pdf, sig_base64, label):
     if not sig_base64:
@@ -113,10 +112,10 @@ def generate_rechnung_pdf(rechnung, positionen, auftrag_rec=None, stammdaten=Non
     # Tabellenkopf
     pdf.set_font('Helvetica', 'B', 9)
     pdf.set_fill_color(240, 240, 240)
-    pdf.cell(95, 6, "  Beschreibung", border=1, fill=True)
-    pdf.cell(20, 6, "Menge", border=1, align='C', fill=True)
-    pdf.cell(30, 6, "Einzelpreis", border=1, align='R', fill=True)
-    pdf.cell(35, 6, "Gesamt (Netto)", border=1, align='R', fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(95, 6, clean_text("  Beschreibung"), border=1, fill=True)
+    pdf.cell(20, 6, clean_text("Menge"), border=1, align='C', fill=True)
+    pdf.cell(30, 6, clean_text("Einzelpreis"), border=1, align='R', fill=True)
+    pdf.cell(35, 6, clean_text("Gesamt (Netto)"), border=1, align='R', fill=True, new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font('Helvetica', '', 9)
     netto_summe = 0.0
@@ -129,8 +128,8 @@ def generate_rechnung_pdf(rechnung, positionen, auftrag_rec=None, stammdaten=Non
 
         pdf.cell(95, 6, clean_text(f"  {p.get('beschreibung', '')}"), border=1)
         pdf.cell(20, 6, clean_text(str(menge)), border=1, align='C')
-        pdf.cell(30, 6, clean_text(f"{epreis:.2f} €"), border=1, align='R')
-        pdf.cell(35, 6, clean_text(f"{gpreis:.2f} €"), border=1, align='R', new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(30, 6, clean_text(f"{epreis:.2f} EUR"), border=1, align='R')
+        pdf.cell(35, 6, clean_text(f"{gpreis:.2f} EUR"), border=1, align='R', new_x="LMARGIN", new_y="NEXT")
 
     mwst_satz = float(rechnung.get('mwst_satz', 19.0))
     mwst_betrag = netto_summe * (mwst_satz / 100.0)
@@ -138,15 +137,15 @@ def generate_rechnung_pdf(rechnung, positionen, auftrag_rec=None, stammdaten=Non
 
     pdf.ln(4)
     pdf.set_font('Helvetica', '', 9)
-    pdf.cell(145, 5, "Zwischensumme Netto:", align='R')
-    pdf.cell(35, 5, f"{netto_summe:.2f} €", align='R', new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(145, 5, clean_text("Zwischensumme Netto:"), align='R')
+    pdf.cell(35, 5, clean_text(f"{netto_summe:.2f} EUR"), align='R', new_x="LMARGIN", new_y="NEXT")
 
-    pdf.cell(145, 5, f"zzgl. {mwst_satz}% MwSt.:", align='R')
-    pdf.cell(35, 5, f"{mwst_betrag:.2f} €", align='R', new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(145, 5, clean_text(f"zzgl. {mwst_satz}% MwSt.:"), align='R')
+    pdf.cell(35, 5, clean_text(f"{mwst_betrag:.2f} EUR"), align='R', new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font('Helvetica', 'B', 10)
-    pdf.cell(145, 7, "Gesamtbetrag (Brutto):", align='R')
-    pdf.cell(35, 7, f"{brutto_summe:.2f} €", align='R', new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(145, 7, clean_text("Gesamtbetrag (Brutto):"), align='R')
+    pdf.cell(35, 7, clean_text(f"{brutto_summe:.2f} EUR"), align='R', new_x="LMARGIN", new_y="NEXT")
 
     # Zusatztext / Zahlungsbedingungen aus Firmenstammdaten
     fuss_text = stammdaten.get("fusszeile_freitext") if stammdaten else "Vielen Dank für Ihren Auftrag!"
@@ -381,8 +380,8 @@ def render_rechnungen_verwaltung(supabase):
                             mat_preview_list.append({
                                 "Material": bez,
                                 "Menge": menge,
-                                "Katalog-Preis (Netto)": f"{preis:.2f} €",
-                                "Gesamt (Netto)": f"{menge * preis:.2f} €"
+                                "Katalog-Preis (Netto)": f"{preis:.2f} EUR",
+                                "Gesamt (Netto)": f"{menge * preis:.2f} EUR"
                             })
                         st.dataframe(pd.DataFrame(mat_preview_list), use_container_width=True, hide_index=True)
                     else:
@@ -435,7 +434,7 @@ def render_rechnungen_verwaltung(supabase):
                 auto_preis = float(kat_match["einzelpreis_netto"]) if kat_match else 0.0
             else:
                 auto_preis = float(item_data["einzelpreis_netto"])
-            st.info(f"💡 Hinterlegter Katalogpreis: **{auto_preis:.2f} € netto**")
+            st.info(f"💡 Hinterlegter Katalogpreis: **{auto_preis:.2f} EUR netto**")
 
         col_kat1, col_kat2 = st.columns([2, 1])
         with col_kat1:
@@ -462,7 +461,7 @@ def render_rechnungen_verwaltung(supabase):
         with col_p2:
             p_menge = st.number_input("Menge / Std.", min_value=0.1, value=1.0, step=0.5, key="frei_menge_inp")
         with col_p3:
-            p_preis = st.number_input("Netto-Preis (€)", min_value=0.0, value=65.0, step=5.0, key="frei_preis_inp")
+            p_preis = st.number_input("Netto-Preis (EUR)", min_value=0.0, value=65.0, step=5.0, key="frei_preis_inp")
 
         if st.button("➕ Freie Position hinzufügen", use_container_width=True):
             if p_beschr.strip():
@@ -480,7 +479,7 @@ def render_rechnungen_verwaltung(supabase):
                 c_p1, c_p2, c_p3, c_p4 = st.columns([4, 2, 2, 1])
                 c_p1.write(f"**{p['beschreibung']}**")
                 c_p2.write(f"{p['menge']} Stk./Std.")
-                c_p3.write(f"{p['einzelpreis_netto']:.2f} € netto")
+                c_p3.write(f"{p['einzelpreis_netto']:.2f} EUR netto")
                 if c_p4.button("🗑️", key=f"del_pos_{idx}"):
                     idx_to_del = idx
 
@@ -559,7 +558,7 @@ def render_rechnungen_verwaltung(supabase):
                         with col_lp2:
                             st.write(f"Einheit: {mat.get('einheit', 'Stk.')}")
                         with col_lp3:
-                             neuer_kat_preis = st.number_input("Netto-Preis (€)", min_value=0.0, value=aktiver_preis, step=1.0, key=f"input_p_{m_id}", label_visibility="collapsed")
+                             neuer_kat_preis = st.number_input("Netto-Preis (EUR)", min_value=0.0, value=aktiver_preis, step=1.0, key=f"input_p_{m_id}", label_visibility="collapsed")
                         with col_lp4:
                             b_save_p = st.form_submit_button("💾 Speichern", use_container_width=True)
 
@@ -599,7 +598,7 @@ def render_rechnungen_verwaltung(supabase):
             st.markdown("##### ✏️ Vorhandene allgemeine Vorlagen bearbeiten")
             freie_vorlagen = [v for v in vorlagen_liste if not v.get("material_id")]
             if freie_vorlagen:
-                edit_sel_id = st.selectbox("Vorlage wählen", options=[None] + [v["id"] for v in freie_vorlagen], format_func=lambda x: "--- Bitte wählen ---" if x is None else next((f"{v['bezeichnung']} ({v['kategorie']} - {float(v['einzelpreis_netto']):.2f} €)" for v in freie_vorlagen if v["id"] == x), ""))
+                edit_sel_id = st.selectbox("Vorlage wählen", options=[None] + [v["id"] for v in freie_vorlagen], format_func=lambda x: "--- Bitte wählen ---" if x is None else next((f"{v['bezeichnung']} ({v['kategorie']} - {float(v['einzelpreis_netto']):.2f} EUR)" for v in freie_vorlagen if v["id"] == x), ""))
                 if edit_sel_id:
                     selected_v = next((v for v in freie_vorlagen if v["id"] == edit_sel_id), None)
                     if selected_v:

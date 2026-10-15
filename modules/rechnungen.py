@@ -280,7 +280,6 @@ def render_rechnungen_verwaltung(supabase):
             if ausgewaehlter_auftrag:
                 k_name_auto = kunden_dict.get(ausgewaehlter_auftrag.get("kunde_id"), "") or ausgewaehlter_auftrag.get("freitext_kunde", "Kunde")
 
-                # Transparente Info-Box mit allen Auftragsdetails
                 with st.container(border=True):
                     st.markdown(f"#### 🔍 Auftragsdetails: #{ausgewaehlter_auftrag.get('auftragsnummer')}")
                     c_inf1, c_inf2 = st.columns(2)
@@ -360,7 +359,6 @@ def render_rechnungen_verwaltung(supabase):
         st.markdown("---")
         st.markdown("##### 🛠️ Rechnung bearbeiten & finalisieren")
 
-        # Artikel manuell aus Katalog hinzufügen
         st.markdown("##### Zusätzlichen Artikel aus Lager oder Vorlagen hinzufügen")
         katalog_optionen = [None] + [{"typ": "lager", "item": m} for m in lager_material_liste] + [{"typ": "vorlage", "item": v} for v in vorlagen_liste if not v.get("material_id")]
         sel_katalog_item = st.selectbox(
@@ -424,7 +422,6 @@ def render_rechnungen_verwaltung(supabase):
 
         st.markdown("---")
 
-        # Aktuelle Positionen
         if st.session_state["rechnung_positionen_temp"]:
             st.markdown("##### 📋 Aktuelle Rechnungspositionen:")
             
@@ -449,7 +446,6 @@ def render_rechnungen_verwaltung(supabase):
 
         st.markdown("---")
 
-        # Speichern Form
         with st.form("neue_rechnung_form"):
             st.markdown("##### 💾 Rechnung finalisieren & speichern")
             col1, col2 = st.columns(2)
@@ -500,10 +496,11 @@ def render_rechnungen_verwaltung(supabase):
     # =========================================================================
     with tabs[2]:
         st.subheader("⚙️ Zentraler Preiskatalog & Stammdaten")
-        st.caption("Legen Sie hier alle Verkaufspreise fest.")
+        st.caption("Legen Sie hier alle Verkaufspreise fest und pflegen Sie Ihre allgemeinen Vorlagen.")
 
         tab_kat_lager, tab_kat_allg = st.tabs(["📦 Lager-Artikel Preise", "📋 Allgemeine Vorlagen"])
 
+        # --- SUB-TAB 1: LAGER-ARTIKEL PREISE ---
         with tab_kat_lager:
             st.markdown("##### Feste Verkaufspreise für Ihre Lagerartikel definieren")
             if not lager_material_liste:
@@ -553,10 +550,11 @@ def render_rechnungen_verwaltung(supabase):
                             except Exception as e:
                                 st.error(f"Fehler: {e}")
 
+        # --- SUB-TAB 2: ALLGEMEINE VORLAGEN (NEU MIT BEARBEITUNGS- & KATEGORIE-FUNKTION) ---
         with tab_kat_allg:
-            st.markdown("##### Allgemeine Leistungsvorlagen (Arbeitszeit, Fahrtkosten)")
+            st.markdown("##### ➕ Neue allgemeine Vorlage anlegen")
             with st.form("neue_vorlage_form"):
-                v_bech_frei = st.text_input("Bezeichnung *", placeholder="z. B. Monteurstunde Standard")
+                v_bech_frei = st.text_input("Bezeichnung *", placeholder="z. B. Monteurstunde Standard oder Anfahrtspauschale")
                 col_v1, col_v2, col_v3 = st.columns(3)
                 with col_v1:
                     v_kat = st.selectbox("Kategorie", ["Arbeitszeit", "Pauschale", "Sonstiges"])
@@ -584,26 +582,55 @@ def render_rechnungen_verwaltung(supabase):
                         st.warning("Bitte eine Bezeichnung eingeben.")
 
             st.markdown("---")
-            st.markdown("##### 📋 Vorhandene allgemeine Vorlagen")
+            st.markdown("##### ✏️ Vorhandene allgemeine Vorlagen bearbeiten oder löschen")
             freie_vorlagen = [v for v in vorlagen_liste if not v.get("material_id")]
             if freie_vorlagen:
-                df_vorlagen = pd.DataFrame([{
-                    "ID": v["id"],
-                    "Bezeichnung": v["bezeichnung"],
-                    "Kategorie": v["kategorie"],
-                    "Einheit": v["einheit"],
-                    "Preis (Netto)": f"{float(v['einzelpreis_netto']):.2f} EUR"
-                } for v in freie_vorlagen])
-                st.dataframe(df_vorlagen, use_container_width=True, hide_index=True)
+                edit_sel_id = st.selectbox(
+                    "Vorlage zum Bearbeiten auswählen", 
+                    options=[None] + [v["id"] for v in freie_vorlagen], 
+                    format_func=lambda x: "--- Bitte wählen ---" if x is None else next((f"{v['bezeichnung']} ({v['kategorie']} - {float(v['einzelpreis_netto']):.2f} €)" for v in freie_vorlagen if v["id"] == x), "")
+                )
                 
-                del_id = st.selectbox("Vorlage zum Löschen auswählen", options=[None] + [v["id"] for v in freie_vorlagen], format_func=lambda x: "--- Bitte wählen ---" if x is None else next((v["bezeichnung"] for v in freie_vorlagen if v["id"] == x), ""))
-                if st.button("🗑️ Ausgewählte Vorlage löschen"):
-                    if del_id:
-                        try:
-                            supabase.table("rechnung_vorlagen").delete().eq("id", del_id).execute()
-                            st.success("Vorlagen-Eintrag gelöscht!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Fehler: {e}")
+                if edit_sel_id:
+                    selected_v = next((v for v in freie_vorlagen if v["id"] == edit_sel_id), None)
+                    if selected_v:
+                        with st.form(f"form_edit_vorlage_{edit_sel_id}"):
+                            st.write(f"**Bearbeite Vorlage:** {selected_v['bezeichnung']}")
+                            ed_bez = st.text_input("Bezeichnung", value=selected_v.get("bezeichnung", ""))
+                            
+                            kats = ["Arbeitszeit", "Pauschale", "Sonstiges"]
+                            current_kat = selected_v.get("kategorie", "Arbeitszeit")
+                            kat_idx = kats.index(current_kat) if current_kat in kats else 0
+                            ed_kat = st.selectbox("Kategorie", kats, index=kat_idx)
+                            
+                            ed_einh = st.text_input("Einheit", value=selected_v.get("einheit", "Std."))
+                            ed_preis = st.number_input("Nettopreis (EUR)", min_value=0.0, value=float(selected_v.get("einzelpreis_netto", 0.0)), step=5.0)
+                            
+                            col_e1, col_e2 = st.columns(2)
+                            with col_e1:
+                                btn_update = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True)
+                            with col_e2:
+                                btn_delete = st.form_submit_button("🗑️ Vorlage löschen", use_container_width=True)
+                                
+                            if btn_update:
+                                try:
+                                    supabase.table("rechnung_vorlagen").update({
+                                        "bezeichnung": ed_bez.strip(),
+                                        "kategorie": ed_kat,
+                                        "einheit": ed_einh,
+                                        "einzelpreis_netto": ed_preis
+                                    }).eq("id", edit_sel_id).execute()
+                                    st.success("Vorlage erfolgreich aktualisiert!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Fehler: {e}")
+                                    
+                            if btn_delete:
+                                try:
+                                    supabase.table("rechnung_vorlagen").delete().eq("id", edit_sel_id).execute()
+                                    st.success("Vorlage gelöscht!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Fehler: {e}")
             else:
                 st.info("Noch keine allgemeinen Vorlagen angelegt.")

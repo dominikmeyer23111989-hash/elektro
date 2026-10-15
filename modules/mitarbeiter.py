@@ -20,6 +20,23 @@ ALL_MODULES = {
     "11": ("11. Rechnungen & Abrechnung", ["sehen", "erstellen", "bearbeiten", "loeschen"])
 }
 
+def hat_recht(modul_id, aktion="sehen"):
+    """Prüft anhand der in der DB hinterlegten rollen['erlaubte_menues'], ob die Aktion erlaubt ist."""
+    user = st.session_state.get("user_data", {})
+    
+    # Rollen-Objekt aus der Datenbank prüfen
+    rollen_obj = user.get("rollen") or {}
+    erlaubte_menues = rollen_obj.get("erlaubte_menues", [])
+    
+    # Fallback für alte Rechte-Listen oder Admin-Rollen
+    if not erlaubte_menues:
+        alte_rechte = user.get("rechte", [])
+        if f"{modul_id}_{aktion}" in alte_rechte or user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+            return True
+        return False
+
+    return f"{modul_id}_{aktion}" in erlaubte_menues
+
 def compress_image(uploaded_file, max_width=1200, quality=75):
     if uploaded_file.type == "application/pdf":
         return uploaded_file.getvalue(), "application/pdf", uploaded_file.name
@@ -114,7 +131,16 @@ def generate_mitarbeiter_pdf(mitarbeiter_data, qualifikationen):
 
 def render_mitarbeiter_verwaltung(supabase):
     st.title("👨‍💼 1. Mitarbeiterverwaltung & Personalakten")
-    
+    st.caption("Verwalten Sie Mitarbeiterstammdaten, Arbeitszeitmodelle, Rollenrechte und Urlaubsanträge.")
+
+    if not hat_recht("1", "sehen"):
+        st.error("⛔ Sie haben keine Berechtigung, die Mitarbeiterverwaltung aufzurufen.")
+        return
+
+    darf_erstellen = hat_recht("1", "erstellen")
+    darf_bearbeiten = hat_recht("1", "bearbeiten")
+    darf_loeschen = hat_recht("1", "loeschen")
+
     user = st.session_state.get("user_data", {})
     user_id = user.get("id")
 
@@ -169,23 +195,23 @@ def render_mitarbeiter_verwaltung(supabase):
                     
                     col_e1, col_e2 = st.columns(2)
                     with col_e1:
-                        neuer_urlaub = st.number_input("Urlaubstage pro Jahr", min_value=0, max_value=60, value=int(selected_ma.get("urlaubstage_gesamt") or 30))
-                        neue_pause = st.number_input("Standard-Pause (Minuten)", min_value=0, max_value=120, value=int(selected_ma.get("standard_pause_minuten") or 30), step=5)
+                        neuer_urlaub = st.number_input("Urlaubstage pro Jahr", min_value=0, max_value=60, value=int(selected_ma.get("urlaubstage_gesamt") or 30), disabled=not darf_bearbeiten)
+                        neue_pause = st.number_input("Standard-Pause (Minuten)", min_value=0, max_value=120, value=int(selected_ma.get("standard_pause_minuten") or 30), step=5, disabled=not darf_bearbeiten)
                     with col_e2:
-                        neuer_status = st.checkbox("Account ist aktiv (Login erlaubt)", value=selected_ma.get("ist_aktiv", True))
+                        neuer_status = st.checkbox("Account ist aktiv (Login erlaubt)", value=selected_ma.get("ist_aktiv", True), disabled=not darf_bearbeiten)
 
                     st.markdown("##### 📅 Tägliche Soll-Stunden (Wochenmodell)")
                     col_w1, col_w2, col_w3, col_w4, col_w5 = st.columns(5)
-                    soll_mo = col_w1.number_input("Mo", 0.0, 12.0, float(selected_ma.get("soll_mo", 8.0)), 0.5)
-                    soll_di = col_w2.number_input("Di", 0.0, 12.0, float(selected_ma.get("soll_di", 8.0)), 0.5)
-                    soll_mi = col_w3.number_input("Mi", 0.0, 12.0, float(selected_ma.get("soll_mi", 8.0)), 0.5)
-                    soll_do = col_w4.number_input("Do", 0.0, 12.0, float(selected_ma.get("soll_do", 8.0)), 0.5)
-                    soll_fr = col_w5.number_input("Fr", 0.0, 12.0, float(selected_ma.get("soll_fr", 6.0)), 0.5)
+                    soll_mo = col_w1.number_input("Mo", 0.0, 12.0, float(selected_ma.get("soll_mo", 8.0)), 0.5, disabled=not darf_bearbeiten)
+                    soll_di = col_w2.number_input("Di", 0.0, 12.0, float(selected_ma.get("soll_di", 8.0)), 0.5, disabled=not darf_bearbeiten)
+                    soll_mi = col_w3.number_input("Mi", 0.0, 12.0, float(selected_ma.get("soll_mi", 8.0)), 0.5, disabled=not darf_bearbeiten)
+                    soll_do = col_w4.number_input("Do", 0.0, 12.0, float(selected_ma.get("soll_do", 8.0)), 0.5, disabled=not darf_bearbeiten)
+                    soll_fr = col_w5.number_input("Fr", 0.0, 12.0, float(selected_ma.get("soll_fr", 6.0)), 0.5, disabled=not darf_bearbeiten)
 
                     berechnete_wochenstunden = soll_mo + soll_di + soll_mi + soll_do + soll_fr
                     st.info(f"Ergeben automatisch **{berechnete_wochenstunden} Wochenstunden**")
                     
-                    if st.form_submit_button("Stammdaten & Arbeitszeiten aktualisieren", type="primary", use_container_width=True):
+                    if st.form_submit_button("Stammdaten & Arbeitszeiten aktualisieren", type="primary", use_container_width=True, disabled=not darf_bearbeiten):
                         try:
                             supabase.table("mitarbeiter").update({
                                 "urlaubstage_gesamt": neuer_urlaub,
@@ -218,73 +244,76 @@ def render_mitarbeiter_verwaltung(supabase):
     # --- TAB 2: Neuer Mitarbeiter ---
     with tab_neu:
         st.subheader("Neuen Mitarbeiter im System anlegen")
-        try:
-            rollen_res = supabase.table("rollen").select("*").execute()
-            rollen_dict = {r["bezeichnung"]: r["id"] for r in rollen_res.data} if rollen_res.data else {}
-        except Exception:
-            rollen_dict = {}
-        
-        with st.form("neuer_mitarbeiter_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                mitarbeiternr = st.text_input("Mitarbeiternummer *", placeholder="z. B. 1005")
-                vorname = st.text_input("Vorname *")
-                nachname = st.text_input("Nachname *")
-                geburtsdatum = st.date_input("Geburtsdatum", value=date(1990, 1, 1), format="DD.MM.YYYY")
-                taetig_seit = st.date_input("Im Unternehmen tätig seit", value=date.today(), format="DD.MM.YYYY")
-                urlaubstage = st.number_input("Urlaubstage pro Jahr", value=30, min_value=0, max_value=60)
-                standard_pause = st.number_input("Standard-Pause pro Schicht (Minuten)", value=30, min_value=0, max_value=120, step=5)
-            with col2:
-                rolle_bezeichnung = st.selectbox("Rolle / Funktion *", list(rollen_dict.keys()) if rollen_dict else ["Keine Rolle"])
-                passwort = st.text_input("Erst-Passwort / PIN *", type="password")
-                notfall_pin = st.text_input("4-stellige Notfall-PIN", type="password", max_chars=4)
-                ist_aktiv_neu = st.checkbox("Account sofort aktivieren", value=True)
-                email = st.text_input("E-Mail (optional)")
-                telefon = st.text_input("Telefon (optional)")
-                adresse = st.text_area("Anschrift (optional)")
-
-            st.markdown("##### 📅 Voreinstellung Wochenmodell (Mo - Fr)")
-            col_n1, col_n2, col_n3, col_n4, col_n5 = st.columns(5)
-            n_mo = col_n1.number_input("Mo Std", 0.0, 12.0, 8.0, 0.5, key="n_mo")
-            n_di = col_n2.number_input("Di Std", 0.0, 12.0, 8.0, 0.5, key="n_di")
-            n_mi = col_n3.number_input("Mi Std", 0.0, 12.0, 8.0, 0.5, key="n_mi")
-            n_do = col_n4.number_input("Do Std", 0.0, 12.0, 8.0, 0.5, key="n_do")
-            n_fr = col_n5.number_input("Fr Std", 0.0, 12.0, 6.0, 0.5, key="n_fr")
+        if not darf_erstellen:
+            st.error("⛔ Sie haben keine Berechtigung, neue Mitarbeiter anzulegen.")
+        else:
+            try:
+                rollen_res = supabase.table("rollen").select("*").execute()
+                rollen_dict = {r["bezeichnung"]: r["id"] for r in rollen_res.data} if rollen_res.data else {}
+            except Exception:
+                rollen_dict = {}
             
-            if st.form_submit_button("Mitarbeiter anlegen", type="primary", use_container_width=True):
-                if not mitarbeiternr or not vorname or not nachname or not passwort:
-                    st.warning("Bitte Pflichtfelder ausfüllen.")
-                else:
-                    try:
-                        rec_code = f"REC-{mitarbeiternr}-88"
-                        data = {
-                            "mitarbeiternummer": mitarbeiternr,
-                            "vorname": vorname,
-                            "nachname": nachname,
-                            "geburtsdatum": str(geburtsdatum),
-                            "taetig_seit": str(taetig_seit),
-                            "urlaubstage_gesamt": urlaubstage,
-                            "wochenstunden": n_mo + n_di + n_mi + n_do + n_fr,
-                            "standard_pause_minuten": standard_pause,
-                            "soll_mo": n_mo,
-                            "soll_di": n_di,
-                            "soll_mi": n_mi,
-                            "soll_do": n_do,
-                            "soll_fr": n_fr,
-                            "rolle_id": rollen_dict.get(rolle_bezeichnung),
-                            "pin_hash": passwort,
-                            "notfall_pin": notfall_pin,
-                            "recovery_code": rec_code,
-                            "email": email,
-                            "telefon": telefon,
-                            "adresse": adresse,
-                            "ist_aktiv": ist_aktiv_neu
-                        }
-                        supabase.table("mitarbeiter").insert(data).execute()
-                        st.success(f"Mitarbeiter {vorname} {nachname} angelegt!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Fehler: {e}")
+            with st.form("neuer_mitarbeiter_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    mitarbeiternr = st.text_input("Mitarbeiternummer *", placeholder="z. B. 1005")
+                    vorname = st.text_input("Vorname *")
+                    nachname = st.text_input("Nachname *")
+                    geburtsdatum = st.date_input("Geburtsdatum", value=date(1990, 1, 1), format="DD.MM.YYYY")
+                    taetig_seit = st.date_input("Im Unternehmen tätig seit", value=date.today(), format="DD.MM.YYYY")
+                    urlaubstage = st.number_input("Urlaubstage pro Jahr", value=30, min_value=0, max_value=60)
+                    standard_pause = st.number_input("Standard-Pause pro Schicht (Minuten)", value=30, min_value=0, max_value=120, step=5)
+                with col2:
+                    rolle_bezeichnung = st.selectbox("Rolle / Funktion *", list(rollen_dict.keys()) if rollen_dict else ["Keine Rolle"])
+                    passwort = st.text_input("Erst-Passwort / PIN *", type="password")
+                    notfall_pin = st.text_input("4-stellige Notfall-PIN", type="password", max_chars=4)
+                    ist_aktiv_neu = st.checkbox("Account sofort aktivieren", value=True)
+                    email = st.text_input("E-Mail (optional)")
+                    telefon = st.text_input("Telefon (optional)")
+                    adresse = st.text_area("Anschrift (optional)")
+
+                st.markdown("##### 📅 Voreinstellung Wochenmodell (Mo - Fr)")
+                col_n1, col_n2, col_n3, col_n4, col_n5 = st.columns(5)
+                n_mo = col_n1.number_input("Mo Std", 0.0, 12.0, 8.0, 0.5, key="n_mo")
+                n_di = col_n2.number_input("Di Std", 0.0, 12.0, 8.0, 0.5, key="n_di")
+                n_mi = col_n3.number_input("Mi Std", 0.0, 12.0, 8.0, 0.5, key="n_mi")
+                n_do = col_n4.number_input("Do Std", 0.0, 12.0, 8.0, 0.5, key="n_do")
+                n_fr = col_n5.number_input("Fr Std", 0.0, 12.0, 6.0, 0.5, key="n_fr")
+                
+                if st.form_submit_button("Mitarbeiter anlegen", type="primary", use_container_width=True):
+                    if not mitarbeiternr or not vorname or not nachname or not passwort:
+                        st.warning("Bitte Pflichtfelder ausfüllen.")
+                    else:
+                        try:
+                            rec_code = f"REC-{mitarbeiternr}-88"
+                            data = {
+                                "mitarbeiternummer": mitarbeiternr,
+                                "vorname": vorname,
+                                "nachname": nachname,
+                                "geburtsdatum": str(geburtsdatum),
+                                "taetig_seit": str(taetig_seit),
+                                "urlaubstage_gesamt": urlaubstage,
+                                "wochenstunden": n_mo + n_di + n_mi + n_do + n_fr,
+                                "standard_pause_minuten": standard_pause,
+                                "soll_mo": n_mo,
+                                "soll_di": n_di,
+                                "soll_mi": n_mi,
+                                "soll_do": n_do,
+                                "soll_fr": n_fr,
+                                "rolle_id": rollen_dict.get(rolle_bezeichnung),
+                                "pin_hash": passwort,
+                                "notfall_pin": notfall_pin,
+                                "recovery_code": rec_code,
+                                "email": email,
+                                "telefon": telefon,
+                                "adresse": adresse,
+                                "ist_aktiv": ist_aktiv_neu
+                            }
+                            supabase.table("mitarbeiter").insert(data).execute()
+                            st.success(f"Mitarbeiter {vorname} {nachname} angelegt!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler: {e}")
 
     # --- TAB 3: Rollen & Feine Rechte (CRUD) ---
     with tab_rollen:
@@ -296,38 +325,39 @@ def render_mitarbeiter_verwaltung(supabase):
         except Exception:
             rollen_data = []
 
-        with st.expander("➕ Neue Rolle mit feinen Rechten erstellen"):
-            with st.form("neue_rolle_crud"):
-                r_bez = st.text_input("Rollenbezeichnung *", placeholder="z. B. Monteur (eingeschränkt)")
-                r_ebene = st.selectbox("Ebene / Bereich *", ["buero", "feld"], format_func=lambda x: "Büro / Verwaltung" if x == "buero" else "Feld / Werkstatt")
-                r_darf_antraege = st.checkbox("Darf Urlaubs- und Abwesenheitsanträge prüfen & genehmigen")
-                
-                st.markdown("---")
-                st.markdown("**Feine Berechtigungen (Sehen, Erstellen, Bearbeiten, Löschen):**")
-                
-                new_rechte_liste = []
-                for mod_id, (mod_titel, aktionen) in ALL_MODULES.items():
-                    st.markdown(f"**{mod_titel}**")
-                    cols = st.columns(len(aktionen))
-                    for idx, akt in enumerate(aktionen):
-                        recht_key = f"{mod_id}_{akt}"
-                        if cols[idx].checkbox(f"{akt.capitalize()}", key=f"new_r_{mod_id}_{akt}"):
-                            new_rechte_liste.append(recht_key)
-                    st.markdown("")
+        if darf_erstellen:
+            with st.expander("➕ Neue Rolle mit feinen Rechten erstellen"):
+                with st.form("neue_rolle_crud"):
+                    r_bez = st.text_input("Rollenbezeichnung *", placeholder="z. B. Monteur (eingeschränkt)")
+                    r_ebene = st.selectbox("Ebene / Bereich *", ["buero", "feld"], format_func=lambda x: "Büro / Verwaltung" if x == "buero" else "Feld / Werkstatt")
+                    r_darf_antraege = st.checkbox("Darf Urlaubs- und Abwesenheitsanträge prüfen & genehmigen")
+                    
+                    st.markdown("---")
+                    st.markdown("**Feine Berechtigungen (Sehen, Erstellen, Bearbeiten, Löschen):**")
+                    
+                    new_rechte_liste = []
+                    for mod_id, (mod_titel, aktionen) in ALL_MODULES.items():
+                        st.markdown(f"**{mod_titel}**")
+                        cols = st.columns(len(aktionen))
+                        for idx, akt in enumerate(aktionen):
+                            recht_key = f"{mod_id}_{akt}"
+                            if cols[idx].checkbox(f"{akt.capitalize()}", key=f"new_r_{mod_id}_{akt}"):
+                                new_rechte_liste.append(recht_key)
+                        st.markdown("")
 
-                if st.form_submit_button("Rolle anlegen", type="primary", use_container_width=True):
-                    if r_bez:
-                        try:
-                            supabase.table("rollen").insert({
-                                "bezeichnung": r_bez, 
-                                "ebene": r_ebene,
-                                "erlaubte_menues": new_rechte_liste,
-                                "darf_antraege_pruefen": r_darf_antraege
-                            }).execute()
-                            st.success(f"Rolle '{r_bez}' erfolgreich erstellt!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Fehler beim Speichern: {e}")
+                    if st.form_submit_button("Rolle anlegen", type="primary", use_container_width=True):
+                        if r_bez:
+                            try:
+                                supabase.table("rollen").insert({
+                                    "bezeichnung": r_bez, 
+                                    "ebene": r_ebene,
+                                    "erlaubte_menues": new_rechte_liste,
+                                    "darf_antraege_pruefen": r_darf_antraege
+                                }).execute()
+                                st.success(f"Rolle '{r_bez}' erfolgreich erstellt!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Fehler beim Speichern: {e}")
 
         if rollen_data:
             st.markdown("---")
@@ -339,9 +369,9 @@ def render_mitarbeiter_verwaltung(supabase):
                     st.markdown(f"#### Rechte feinjustieren für: **{r_obj['bezeichnung']}**")
                     
                     cur_ebene = r_obj.get("ebene", "buero")
-                    new_ebene = st.selectbox("Ebene / Bereich", ["buero", "feld"], index=0 if cur_ebene == "buero" else 1, format_func=lambda x: "Büro / Verwaltung" if x == "buero" else "Feld / Werkstatt", key=f"edit_ebene_{r_obj['id']}")
+                    new_ebene = st.selectbox("Ebene / Bereich", ["buero", "feld"], index=0 if cur_ebene == "buero" else 1, format_func=lambda x: "Büro / Verwaltung" if x == "buero" else "Feld / Werkstatt", key=f"edit_ebene_{r_obj['id']}", disabled=not darf_bearbeiten)
                     cur_darf = bool(r_obj.get("darf_antraege_pruefen", False))
-                    new_darf = st.checkbox("Darf Urlaubs- und Abwesenheitsanträge prüfen & genehmigen", value=cur_darf)
+                    new_darf = st.checkbox("Darf Urlaubs- und Abwesenheitsanträge prüfen & genehmigen", value=cur_darf, disabled=not darf_bearbeiten)
                     
                     st.markdown("---")
                     st.markdown("**Modul-Aktionen (CRUD):**")
@@ -354,17 +384,17 @@ def render_mitarbeiter_verwaltung(supabase):
                         for idx, akt in enumerate(aktionen):
                             recht_key = f"{mod_id}_{akt}"
                             is_checked = recht_key in cur_m
-                            if cols[idx].checkbox(f"{akt.capitalize()}", value=is_checked, key=f"edit_rc_{r_obj['id']}_{mod_id}_{akt}"):
+                            if cols[idx].checkbox(f"{akt.capitalize()}", value=is_checked, key=f"edit_rc_{r_obj['id']}_{mod_id}_{akt}", disabled=not darf_bearbeiten):
                                 updated_rechte_liste.append(recht_key)
                         st.markdown("")
                         
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:
-                        btn_update = st.form_submit_button("💾 Feine Rechte aktualisieren", type="primary", use_container_width=True)
+                        btn_update = st.form_submit_button("💾 Feine Rechte aktualisieren", type="primary", use_container_width=True, disabled=not darf_bearbeiten)
                     with col_b2:
-                        btn_delete = st.form_submit_button("🗑️ Rolle löschen", use_container_width=True)
+                        btn_delete = st.form_submit_button("🗑️ Rolle löschen", use_container_width=True, disabled=not darf_loeschen)
 
-                    if btn_update:
+                    if btn_update and darf_bearbeiten:
                         try:
                             supabase.table("rollen").update({
                                 "ebene": new_ebene,
@@ -376,7 +406,7 @@ def render_mitarbeiter_verwaltung(supabase):
                         except Exception as e:
                             st.error(f"Fehler: {e}")
 
-                    if btn_delete:
+                    if btn_delete and darf_loeschen:
                         try:
                             check_ma = supabase.table("mitarbeiter").select("id").eq("rolle_id", r_obj["id"]).execute()
                             if check_ma.data and len(check_ma.data) > 0:
@@ -436,7 +466,7 @@ def render_mitarbeiter_verwaltung(supabase):
         st.markdown("---")
 
         sub_tab_neu, sub_tab_meine, sub_tab_admin = st.tabs([
-            "➕ Neuen Antrag stellen", 
+            "➕ Neuer Antrag stellen", 
             "📄 Meine Anträge", 
             f"⚙️ Anträge prüfen ({anzahl_offen} offen)" if is_antrag_admin else "🔒 Admin-Ansicht (Gesperrt)"
         ])
@@ -519,9 +549,9 @@ def render_mitarbeiter_verwaltung(supabase):
                 d_erh = st.date_input("Erhalten am", value=date.today())
                 d_bis = st.date_input("Gültig bis", value=None)
                 desc = st.text_input("Anmerkung")
-                up_file = st.file_uploader("Nachweis (Bild/PDF)", type=["png", "jpg", "jpeg", "pdf"])
+                up_file = st.file_uploader("Nachweis (Bild/PDF)", type=["png", "jpg", "jpeg", "pdf"], disabled=not darf_erstellen)
                 
-                if st.form_submit_button("Speichern", type="primary", use_container_width=True):
+                if st.form_submit_button("Speichern", type="primary", use_container_width=True, disabled=not darf_erstellen):
                     if titel:
                         f_url = None
                         if up_file:

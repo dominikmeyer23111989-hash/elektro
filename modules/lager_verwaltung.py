@@ -157,7 +157,7 @@ def render_lager_verwaltung(supabase):
     ])
 
     # Standard-Kategorien für Dropdowns
-    verfuegbare_kategorien = ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Material", "Arbeitszeit", "Pauschale", "Sonstiges", "Allgemein"]
+    verfuegbare_kategorien = ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Material",  "Sonstiges", "Allgemein"]
 
     # --- TAB 1: BESTANDSÜBERSICHT ---
     with tabs[0]:

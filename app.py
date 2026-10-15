@@ -2,6 +2,8 @@ import streamlit as st
 from supabase import create_client, Client
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
+from streamlit_cookies_controller import CookieController
+
 from modules.mitarbeiter import render_mitarbeiter_verwaltung, ALL_MODULES
 from modules.zeiterfassung import render_zeiterfassung
 from modules.steuerberater import render_steuerberater_export
@@ -11,13 +13,16 @@ from modules.gebaeude import render_gebaeude_verwaltung
 from modules.auftraege import render_auftraege_verwaltung
 from modules.tv_dashboard import render_tv_dashboard
 from modules.lager_verwaltung import render_lager_verwaltung
-from modules.rechnungen import render_rechnungen_verwaltung  # <--- NEU HINZUGEFÜGT
+from modules.rechnungen import render_rechnungen_verwaltung
 
 st.set_page_config(
     page_title="Elektro-Enterprise Portal", 
     page_icon="⚡", 
     layout="wide"
 )
+
+# Cookie Controller initialisieren
+controller = CookieController()
 
 # -----------------------------------------------------------------------------
 # 1. Supabase Initialisierung & Zentrale Rechte-Hilfsfunktion
@@ -60,6 +65,43 @@ if "user_data" not in st.session_state:
     st.session_state["user_data"] = None
 if "show_profil" not in st.session_state:
     st.session_state["show_profil"] = False
+
+# Automatischen Login über Cookie prüfen, falls Session abgelaufen war
+if not st.session_state["authenticated"]:
+    saved_user_id = controller.get("electro_user_id")
+    if saved_user_id:
+        try:
+            res = supabase.table("mitarbeiter").select("*, rollen(*)").eq("id", saved_user_id).eq("ist_aktiv", True).execute()
+            if res.data:
+                user_rec = res.data[0]
+                rolle_info = user_rec.get("rollen") or {}
+                f_rolle = rolle_info.get("bezeichnung", "Admin")
+                f_ebene = rolle_info.get("ebene", "buero")
+                f_rechte = rolle_info.get("erlaubte_menues") or [
+                    "1_sehen", "1_erstellen", "1_bearbeiten", "1_loeschen",
+                    "2_sehen", "2_erstellen", "2_bearbeiten", "2_loeschen",
+                    "3_sehen", "3_erstellen", "3_bearbeiten", "3_loeschen",
+                    "4_sehen", "4_erstellen", "4_bearbeiten", "4_loeschen",
+                    "5_sehen", "5_erstellen", "5_bearbeiten", "5_loeschen",
+                    "6_sehen", "6_erstellen", "6_bearbeiten", "6_loeschen",
+                    "7_sehen", "7_erstellen", "7_bearbeiten", "7_loeschen",
+                    "8_sehen", "8_erstellen", "8_loeschen",
+                    "9_sehen", "9_bearbeiten",
+                    "10_sehen", "10_exportieren",
+                    "11_sehen", "11_erstellen", "11_bearbeiten", "11_loeschen"
+                ]
+
+                st.session_state["authenticated"] = True
+                st.session_state["user_data"] = {
+                    "id": user_rec["id"],
+                    "mitarbeiternummer": user_rec.get("mitarbeiternummer", "-"),
+                    "name": f"{user_rec.get('vorname', '')} {user_rec.get('nachname', '')}".strip(),
+                    "rolle": f_rolle,
+                    "ebene": f_ebene,
+                    "rechte": f_rechte
+                }
+        except Exception:
+            pass
 
 # -----------------------------------------------------------------------------
 # 2. Login- & Passwort-Wiederherstellungs-System
@@ -123,6 +165,10 @@ def render_login():
                                     "ebene": f_ebene,
                                     "rechte": f_rechte
                                 }
+                                
+                                # Cookie für 30 Tage im Browser speichern
+                                controller.set("electro_user_id", user_rec["id"], max_age=30*24*60*60)
+
                                 st.success("Erfolgreich angemeldet!")
                                 st.rerun()
                             else:
@@ -367,10 +413,9 @@ def render_app():
         "8": "8. Dokumente",
         "9": "9. TV-Leitsystem",
         "10": "10. Steuerberater-Export",
-        "11": "11. Rechnungen & Abrechnung"  # <--- HIER NEU HINZUGEFÜGT
+        "11": "11. Rechnungen & Abrechnung"
     }
 
-    # Nur Module anzeigen, für die der User das Recht "sehen" besitzt
     available_menus = {k: v for k, v in extended_modules.items() if hat_recht(k, "sehen")}
 
     if not available_menus:
@@ -395,6 +440,8 @@ def render_app():
         st.rerun()
 
     if st.sidebar.button("🚪 Abmelden", use_container_width=True):
+        # Cookie löschen beim Logout
+        controller.remove("electro_user_id")
         st.session_state["authenticated"] = False
         st.session_state["user_data"] = None
         st.session_state["show_profil"] = False
@@ -408,7 +455,6 @@ def render_app():
         render_mein_profil(supabase)
     else:
         if selected_main:
-            # Schutz vor Direktzugriff, falls Modul nicht gesehen werden darf
             if not hat_recht(selected_main, "sehen"):
                 st.error("⛔ Sie haben keine Berechtigung, dieses Modul aufzurufen.")
                 return
@@ -432,7 +478,7 @@ def render_app():
             elif selected_main == "10":
                 render_steuerberater_export(supabase)
             elif selected_main == "11":
-                render_rechnungen_verwaltung(supabase)  # <--- HIER EINGEBUNDEN
+                render_rechnungen_verwaltung(supabase)
             else:
                 st.title(available_menus[selected_main])
                 st.info("Dieses Modul wird als Nächstes ausgebaut.")

@@ -16,7 +16,8 @@ ALL_MODULES = {
     "7": ("7. Gebäude", ["sehen", "erstellen", "bearbeiten", "loeschen"]),
     "8": ("8. Dokumente", ["sehen", "erstellen", "loeschen"]),
     "9": ("9. TV-Leitsystem", ["sehen", "bearbeiten"]),
-    "10": ("10. Steuerberater-Export", ["sehen", "exportieren"])
+    "10": ("10. Steuerberater-Export", ["sehen", "exportieren"]),
+    "11": ("11. Rechnungen & Abrechnung", ["sehen", "erstellen", "bearbeiten", "loeschen"])
 }
 
 def compress_image(uploaded_file, max_width=1200, quality=75):
@@ -298,6 +299,7 @@ def render_mitarbeiter_verwaltung(supabase):
         with st.expander("➕ Neue Rolle mit feinen Rechten erstellen"):
             with st.form("neue_rolle_crud"):
                 r_bez = st.text_input("Rollenbezeichnung *", placeholder="z. B. Monteur (eingeschränkt)")
+                r_ebene = st.selectbox("Ebene / Bereich *", ["buero", "feld"], format_func=lambda x: "Büro / Verwaltung" if x == "buero" else "Feld / Werkstatt")
                 r_darf_antraege = st.checkbox("Darf Urlaubs- und Abwesenheitsanträge prüfen & genehmigen")
                 
                 st.markdown("---")
@@ -318,7 +320,8 @@ def render_mitarbeiter_verwaltung(supabase):
                         try:
                             supabase.table("rollen").insert({
                                 "bezeichnung": r_bez, 
-                                "erlaubte_menues": new_rechte_liste, # Speichert Keys wie "4_sehen", "4_bearbeiten"
+                                "ebene": r_ebene,
+                                "erlaubte_menues": new_rechte_liste,
                                 "darf_antraege_pruefen": r_darf_antraege
                             }).execute()
                             st.success(f"Rolle '{r_bez}' erfolgreich erstellt!")
@@ -335,6 +338,8 @@ def render_mitarbeiter_verwaltung(supabase):
                 with st.form(f"edit_rolle_crud_{r_obj['id']}"):
                     st.markdown(f"#### Rechte feinjustieren für: **{r_obj['bezeichnung']}**")
                     
+                    cur_ebene = r_obj.get("ebene", "buero")
+                    new_ebene = st.selectbox("Ebene / Bereich", ["buero", "feld"], index=0 if cur_ebene == "buero" else 1, format_func=lambda x: "Büro / Verwaltung" if x == "buero" else "Feld / Werkstatt", key=f"edit_ebene_{r_obj['id']}")
                     cur_darf = bool(r_obj.get("darf_antraege_pruefen", False))
                     new_darf = st.checkbox("Darf Urlaubs- und Abwesenheitsanträge prüfen & genehmigen", value=cur_darf)
                     
@@ -362,6 +367,7 @@ def render_mitarbeiter_verwaltung(supabase):
                     if btn_update:
                         try:
                             supabase.table("rollen").update({
+                                "ebene": new_ebene,
                                 "erlaubte_menues": updated_rechte_liste,
                                 "darf_antraege_pruefen": new_darf
                             }).eq("id", r_obj["id"]).execute()
@@ -385,7 +391,6 @@ def render_mitarbeiter_verwaltung(supabase):
     # --- TAB 4: Urlaub & Anträge ---
     with tab_urlaub:
         st.subheader("🏖️ Urlaubs- & Abwesenheitsanträge")
-        # (Bleibt wie in Ihrer Version erhalten)
         try:
             all_antraege_res = supabase.table("antraege").select("*, mitarbeiter(vorname, nachname, mitarbeiternummer)").execute()
             all_antraege = all_antraege_res.data or []
@@ -513,7 +518,7 @@ def render_mitarbeiter_verwaltung(supabase):
                 titel = st.text_input("Titel *")
                 d_erh = st.date_input("Erhalten am", value=date.today())
                 d_bis = st.date_input("Gültig bis", value=None)
-                desc = st.text_area("Anmerkung")
+                desc = st.text_input("Anmerkung")
                 up_file = st.file_uploader("Nachweis (Bild/PDF)", type=["png", "jpg", "jpeg", "pdf"])
                 
                 if st.form_submit_button("Speichern", type="primary", use_container_width=True):

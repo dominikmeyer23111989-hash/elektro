@@ -166,7 +166,7 @@ def render_rechnungen_verwaltung(supabase):
     ])
 
     # Standard-Einheiten & Kategorien
-    verfuegbare_einheiten = ["Std.", "Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"]
+    verfuegbare_einheiten = ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"]
     verfuegbare_kategorien = ["Arbeitszeit", "Material", "Pauschale", "Sonstiges"]
 
     # =========================================================================

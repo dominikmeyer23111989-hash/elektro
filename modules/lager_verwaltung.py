@@ -156,6 +156,9 @@ def render_lager_verwaltung(supabase):
         "📜 Entnahme-Logs"
     ])
 
+    # Standard-Kategorien für Dropdowns
+    verfuegbare_kategorien = ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Material", "Arbeitszeit", "Pauschale", "Sonstiges", "Allgemein"]
+
     # --- TAB 1: BESTANDSÜBERSICHT ---
     with tabs[0]:
         st.subheader("Aktueller Lagerbestand & Standort-Finder")
@@ -233,7 +236,7 @@ def render_lager_verwaltung(supabase):
                         label="📥 Materialliste als CSV herunterladen",
                         data=csv_daten,
                         file_name=f"Materialliste_{datetime.now().strftime('%Y-%m-%d')}.csv",
-                        mime="text/csv",
+                        mime="application/pdf",
                         key="csv_download_material"
                     )
             else:
@@ -434,7 +437,7 @@ def render_lager_verwaltung(supabase):
                 with col_a1:
                     n_bezeichnung = st.text_input("Artikelbezeichnung *", placeholder="z.B. NYM-J 3x1.5")
                     n_artnr = st.text_input("Artikelnummer / Barcode *", placeholder="z.B. EAN oder interner Code")
-                    n_kategorie = st.selectbox("Kategorie", ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug"])
+                    n_kategorie = st.selectbox("Kategorie", verfuegbare_kategorien)
                 with col_a2:
                     n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])
                     n_lagerort = st.text_input("📍 Lagerort / Regal", placeholder="z.B. Regal A1, Fach 3")
@@ -477,7 +480,15 @@ def render_lager_verwaltung(supabase):
             with st.form("artikel_bearbeiten_form"):
                 e_bezeichnung = st.text_input("Bezeichnung", value=aktiver_mat.get('bezeichnung', ''))
                 e_artnr = st.text_input("Artikelnummer / Barcode", value=aktiver_mat.get('artikelnummer', ''))
-                e_kategorie = st.text_input("Kategorie", value=aktiver_mat.get('kategorie', 'Allgemein'))
+                
+                # Kategorie als Selectbox statt Textfeld
+                aktuelle_kat = aktiver_mat.get('kategorie', 'Allgemein')
+                kats_bearb = list(verfuegbare_kategorien)
+                if aktuelle_kat not in kats_bearb:
+                    kats_bearb.append(aktuelle_kat)
+                kat_idx = kats_bearb.index(aktuelle_kat) if aktuelle_kat in kats_bearb else 0
+                e_kategorie = st.selectbox("Kategorie", kats_bearb, index=kat_idx)
+
                 e_einheit = st.text_input("Einheit", value=aktiver_mat.get('einheit', 'Stk.'))
                 e_lagerort = st.text_input("📍 Lagerort / Regal", value=aktiver_mat.get('lagerort', ''))
                 
@@ -523,7 +534,7 @@ def render_lager_verwaltung(supabase):
                     else:
                         st.error("Keine Berechtigung.")
 
-    # --- TAB 6: INVENTUR (Session-Zwischenspeicherung & Häkchen bleiben erhalten) ---
+    # --- TAB 6: INVENTUR ---
     with tabs[5]:
         st.subheader("📋 Systematische Inventur (Live-Zwischengespeichert)")
         st.caption("Ihre Eingaben bleiben im Arbeitsspeicher erhalten. Artikel mit einem grünen Häkchen ✅ wurden bereits gezählt.")
@@ -546,7 +557,6 @@ def render_lager_verwaltung(supabase):
         elif not darf_bearbeiten:
             st.error("⛔ Keine Berechtigung.")
         else:
-            # Tabellenkopf
             h1, h2, h3, h4 = st.columns([2, 1, 1, 2])
             with h1:
                 st.markdown("**Artikel & Ort**")
@@ -563,7 +573,6 @@ def render_lager_verwaltung(supabase):
                 m_id = m['id']
                 system_ist = int(m.get('ist_bestand', 0))
 
-                # Standardwert im Session State initialisieren
                 if m_id not in st.session_state["inventur_werte"]:
                     st.session_state["inventur_werte"][m_id] = system_ist
 
@@ -614,8 +623,6 @@ def render_lager_verwaltung(supabase):
                                 "kommentar": inventur_kommentar
                             }).execute()
 
-                        # HINWEIS: Wir löschen die Häkchen und Werte hier NICHT mehr automatisch, 
-                        # damit Sie sehen, was gebucht wurde. Zum Zurücksetzen gibt es den Extra-Button rechts.
                         st.toast("Inventur erfolgreich abgeschlossen & Bestände aktualisiert!", icon="🎯")
                         st.rerun()
                     except Exception as e:
@@ -628,149 +635,39 @@ def render_lager_verwaltung(supabase):
                     st.toast("Alle Zähl-Zwischenstände und Häkchen zurückgesetzt.", icon="🔄")
                     st.rerun()
 
-            # PDF-Export für die Inventurliste
             st.markdown("---")
             inventur_pdf_daten = []
             for m in material_liste:
                 m_id = m['id']
                 gezahlt_wert = st.session_state["inventur_werte"].get(m_id, m.get('ist_bestand', 0))
+                soll = m.get('soll_bestand', 0)
+                if gezahlt_wert <= 0:
+                    status = "🔴 Leer"
+                elif gezahlt_wert < soll:
+                    status = "🟡 Unter Soll"
+                else:
+                    status = "🟢 OK"
                 
                 inventur_pdf_daten.append([
                     str(m.get('artikelnummer', '-')),
                     str(m.get('bezeichnung', '')),
+                    str(m.get('kategorie', 'Allgemein')),
                     str(m.get('lagerort', '-')),
-                    f"{m.get('ist_bestand', 0)} {m.get('einheit', 'Stk.')}",
-                    f"{m.get('soll_bestand', 0)} {m.get('einheit', 'Stk.')}",
-                    f"{gezahlt_wert} {m.get('einheit', 'Stk.')}"
+                    f"{gezahlt_wert} {m.get('einheit', 'Stk.')}",
+                    str(soll),
+                    status
                 ])
 
-            col_inv_exp1, col_inv_exp2 = st.columns(2)
-            with col_inv_exp1:
-                if PDF_EXPORT_AVAILABLE:
-                    inv_pdf_bytes = generiere_pdf_bericht(
-                        f"Inventur-Zählliste (Letzte Inventur: {letzte_inventur_datum})",
-                        ["Code", "Bezeichnung", "Lagerort", "System-Ist", "Mindest-Soll", "Gezählter Ist-Bestand"],
-                        inventur_pdf_daten
-                    )
-                    st.download_button(
-                        label="📄 Inventurliste als PDF herunterladen",
-                        data=inv_pdf_bytes,
-                        file_name=f"Inventur_Zaehlliste_{datetime.now().strftime('%Y-%m-%d')}.pdf",
-                        mime="application/pdf",
-                        key="pdf_download_inventur"
-                    )
-                else:
-                    st.warning("⚠️ PDF-Export inaktiv (pip install reportlab)")
-            with col_inv_exp2:
-                inv_df = pd.DataFrame(inventur_pdf_daten, columns=["Code", "Bezeichnung", "Lagerort", "System-Ist", "Mindest-Soll", "Gezählter Ist-Bestand"])
-                csv_inv = inv_df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Inventurliste als CSV herunterladen",
-                    data=csv_inv,
-                    file_name=f"Inventurliste_{datetime.now().strftime('%Y-%m-%d')}.csv",
-                    mime="text/csv",
-                    key="csv_download_inventur"
+            if PDF_EXPORT_AVAILABLE and inventur_pdf_daten:
+                inv_pdf_bytes = generiere_pdf_bericht(
+                    "Inventur-Zählprotokoll",
+                    ["Code", "Bezeichnung", "Kategorie", "Lagerort", "Gezählt", "Soll", "Status"],
+                    inventur_pdf_daten
                 )
-
-    # --- TAB 7: CSV-IMPORT ---
-    with tabs[6]:
-        st.subheader("📥 Massen-Import (CSV)")
-        uploaded_file = st.file_uploader("CSV-Datei auswählen", type=["csv"])
-        if uploaded_file is not None:
-            try:
-                df_import = pd.read_csv(uploaded_file)
-                st.write("Vorschau:", df_import.head())
-                if st.button("🚀 Importieren", type="primary"):
-                    for _, row in df_import.iterrows():
-                        supabase.table("lager_material").insert({
-                            "artikelnummer": str(row.get('artikelnummer', '')),
-                            "bezeichnung": str(row.get('bezeichnung', 'Unbekannt')),
-                            "kategorie": str(row.get('kategorie', 'Allgemein')),
-                            "einheit": str(row.get('einheit', 'Stk.')),
-                            "soll_bestand": int(row.get('soll_bestand', 5)),
-                            "ist_bestand": int(row.get('ist_bestand', 0)),
-                            "lagerort": str(row.get('lagerort', 'Hauptlager'))
-                        }).execute()
-                    st.toast("Erfolgreich importiert!", icon="🎉")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Fehler: {e}")
-
-    # --- TAB 8: ENTNAHME-LOGS (Rollenbasiert) ---
-    with tabs[7]:
-        st.subheader("📜 Historie & Entnahmeprotokoll (Logs)")
-        st.caption("Wer hat wann, wie viel entnommen und für welches Projekt?")
-
-        user_rolle = st.session_state.get("user_data", {}).get("rolle", "")
-        if user_rolle not in ["Admin", "Inhaber", "Chef"] and not hat_recht("2", "bearbeiten"):
-            st.error("⛔ Sie haben keine Berechtigung, das Entnahmeprotokoll einzusehen.")
-        else:
-            try:
-                b_res = supabase.table("lager_bewegungen").select("*").order("id", desc=True).limit(200).execute()
-                bewegungen = b_res.data or []
-
-                if not bewegungen:
-                    st.info("Noch keine Materialbewegungen aufgezeichnet.")
-                else:
-                    mat_map = {m["id"]: m for m in material_liste}
-
-                    log_daten = []
-                    log_pdf_daten = []
-                    for b in bewegungen:
-                        mat_info = mat_map.get(b.get("material_id"), {})
-                        m_val = b.get("menge", 0)
-                        art = b.get("art", "-")
-                        bez = mat_info.get("bezeichnung", "Unbekannt")
-                        code = mat_info.get("artikelnummer", "-")
-                        einheit = mat_info.get("einheit", "Stk.")
-                        kommentar = b.get("kommentar", "-")
-                        
-                        log_daten.append({
-                            "Art": art,
-                            "Artikel": bez,
-                            "Code": code,
-                            "Menge": m_val,
-                            "Einheit": einheit,
-                            "Details / Kommentar": kommentar
-                        })
-
-                        log_pdf_daten.append([
-                            str(art),
-                            str(bez),
-                            str(code),
-                            f"{m_val} {einheit}",
-                            str(kommentar)
-                        ])
-
-                    log_df = pd.DataFrame(log_daten)
-                    st.dataframe(log_df, use_container_width=True, hide_index=True)
-                    st.caption(f"Letzte {len(log_df)} Buchungsvorgänge im System.")
-
-                    col_log_exp1, col_log_exp2 = st.columns(2)
-                    with col_log_exp1:
-                        if PDF_EXPORT_AVAILABLE:
-                            log_pdf_bytes = generiere_pdf_bericht(
-                                "Entnahme- und Bewegungsprotokoll (Logs)",
-                                ["Art", "Artikel", "Code", "Menge", "Details & Projekt"],
-                                log_pdf_daten
-                            )
-                            st.download_button(
-                                label="📄 Entnahme-Logs als PDF herunterladen",
-                                data=log_pdf_bytes,
-                                file_name=f"Lager_Logs_{datetime.now().strftime('%Y-%m-%d')}.pdf",
-                                mime="application/pdf",
-                                key="pdf_download_logs"
-                            )
-                        else:
-                            st.warning("⚠️ PDF-Export inaktiv (pip install reportlab)")
-                    with col_log_exp2:
-                        csv_log = log_df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Entnahme-Logs als CSV herunterladen",
-                            data=csv_log,
-                            file_name=f"Lager_Logs_{datetime.now().strftime('%Y-%m-%d')}.csv",
-                            mime="text/csv",
-                            key="csv_download_logs"
-                        )
-            except Exception as e:
-                st.error(f"Fehler beim Laden der Logs: {e}")
+                st.download_button(
+                    label="📄 Inventur-Protokoll als PDF herunterladen",
+                    data=inv_pdf_bytes,
+                    file_name=f"Inventur_Protokoll_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+                    mime="application/pdf",
+                    key="pdf_download_inventur"
+                )

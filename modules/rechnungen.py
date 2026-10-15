@@ -2,24 +2,67 @@ import streamlit as st
 from datetime import datetime
 import pandas as pd
 from fpdf import FPDF
-from zoneinfo import ZoneInfo
 from io import BytesIO
 import base64
 import tempfile
 import os
 
 class RechnungsPDF(FPDF):
+    def __init__(self, stammdaten=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.stammdaten = stammdaten or {}
+
     def header(self):
+        # 1. Logo oben rechts/links einbinden
+        logo_b64 = self.stammdaten.get("logo_base64")
+        has_logo = False
+        if logo_b64:
+            try:
+                if "," in logo_b64:
+                    logo_b64 = logo_b64.split(",")[1]
+                img_data = base64.b64decode(logo_b64)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                    tmp.write(img_data)
+                    tmp_logo_path = tmp.name
+                
+                # Logo oben rechts positionieren (Breite z.B. 45mm)
+                self.image(tmp_logo_path, x=145, y=10, w=50)
+                os.unlink(tmp_logo_path)
+                has_logo = True
+            except Exception:
+                pass
+
+        # 2. Absender / Firmenname oben links
         self.set_font('Helvetica', 'B', 14)
-        self.cell(0, 8, 'ELEKTRO-ENTERPRISE - RECHNUNG', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
-        self.set_font('Helvetica', 'I', 9)
-        self.cell(0, 5, 'Rechnungsstellung für Montage, Service und Material', border=False, new_x="LMARGIN", new_y="NEXT", align='C')
-        self.ln(5)
+        fname = self.stammdaten.get('firmenname', 'ELEKTRO-ENTERPRISE')
+        self.cell(120, 7, clean_text(fname), border=False, new_x="LMARGIN", new_y="NEXT")
+        
+        self.set_font('Helvetica', '', 8)
+        self.set_text_color(100, 100, 100)
+        absender_zeile = f"{fname} • {self.stammdaten.get('strasse', '')} • {self.stammdaten.get('plz_ort', '')}"
+        self.cell(120, 4, clean_text(absender_zeile), border=False, new_x="LMARGIN", new_y="NEXT")
+        
+        self.set_text_color(0, 0, 0)
+        self.ln(10)
 
     def footer(self):
-        self.set_y(-15)
-        self.set_font('Helvetica', 'I', 8)
-        self.cell(0, 10, f'Seite {self.page_no()}', align='C')
+        self.set_y(-25)
+        self.set_font('Helvetica', '', 7)
+        self.set_text_color(100, 100, 100)
+        self.line(10, self.get_y(), 200, self.get_y()) # Trennlinie
+        self.ln(2)
+
+        # 3 Spalten in der Fußzeile (Firma / Bank / Steuer)
+        col1 = f"{self.stammdaten.get('firmenname', '')}\nInh.: {self.stammdaten.get('inhaber', '')}\nTel: {self.stammdaten.get('telefon', '')}\nE-Mail: {self.stammdaten.get('email', '')}"
+        col2 = f"Bank: {self.stammdaten.get('bankname', '')}\nIBAN: {self.stammdaten.get('iban', '')}\nBIC: {self.stammdaten.get('bic', '')}"
+        col3 = f"St.-Nr.: {self.stammdaten.get('steuernummer', '')}\nUst-ID: {self.stammdaten.get('ust_id', '')}\nSeite {self.page_no()}"
+
+        y_start = self.get_y()
+        self.multi_cell(60, 3.5, clean_text(col1), border=0, align='L')
+        self.set_xy(75, y_start)
+        self.multi_cell(60, 3.5, clean_text(col2), border=0, align='L')
+        self.set_xy(140, y_start)
+        self.multi_cell(55, 3.5, clean_text(col3), border=0, align='R')
 
 def clean_text(text):
     if not text:
@@ -39,35 +82,43 @@ def add_signature_to_pdf(pdf, sig_base64, label):
             tmp_path = tmp.name
         
         pdf.ln(3)
-        pdf.set_font('Helvetica', 'B', 9)
-        pdf.cell(0, 5, clean_text(label), new_x="LMARGIN", new_y="NEXT")
-        pdf.image(tmp_path, w=45)
+        pdf.set_font('Helvetica', 'B', 8)
+        pdf.cell(0, 4, clean_text(label), new_x="LMARGIN", new_y="NEXT")
+        pdf.image(tmp_path, w=40)
         os.unlink(tmp_path)
     except Exception:
         pass
 
-def generate_rechnung_pdf(rechnung, positionen, auftrag_rec=None):
-    pdf = RechnungsPDF(orientation='P', unit='mm', format='A4')
+def generate_rechnung_pdf(rechnung, positionen, auftrag_rec=None, stammdaten=None):
+    pdf = RechnungsPDF(stammdaten=stammdaten, orientation='P', unit='mm', format='A4')
+    pdf.set_margins(15, 15, 15)
     pdf.add_page()
-    pdf.set_font('Helvetica', '', 11)
 
-    pdf.set_font('Helvetica', 'B', 12)
-    pdf.cell(0, 6, clean_text(f"Rechnungsnummer: {rechnung.get('rechnungsnummer')}"), new_x="LMARGIN", new_y="NEXT")
+    # Empfänger-Adresse
     pdf.set_font('Helvetica', '', 10)
+    pdf.cell(100, 5, clean_text(rechnung.get('kunde_name', '-')), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(10)
+
+    # Rechnungs-Titel & Info-Block
+    pdf.set_font('Helvetica', 'B', 14)
+    pdf.cell(0, 7, clean_text(f"RECHNUNG Nr. {rechnung.get('rechnungsnummer')}"), new_x="LMARGIN", new_y="NEXT")
     
-    r_datum = rechnung.get('rechnungs_datum', datetime.now().strftime('%Y-%m-%d'))
-    pdf.cell(0, 6, clean_text(f"Rechnungsdatum: {r_datum}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 6, clean_text(f"Kunde: {rechnung.get('kunde_name', '-')}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(6)
+    pdf.set_font('Helvetica', '', 9)
+    r_datum = rechnung.get('rechnungs_datum', datetime.now().strftime('%d.%m.%Y'))
+    pdf.cell(0, 5, clean_text(f"Datum: {r_datum}"), new_x="LMARGIN", new_y="NEXT")
+    if auftrag_rec:
+        pdf.cell(0, 5, clean_text(f"Auftragsnummer: #{auftrag_rec.get('auftragsnummer', '-')}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(5)
 
     # Tabellenkopf
-    pdf.set_font('Helvetica', 'B', 10)
-    pdf.cell(90, 6, "Beschreibung", border=1)
-    pdf.cell(25, 6, "Menge", border=1, align='C')
-    pdf.cell(35, 6, "Einzelpreis (Netto)", border=1, align='R')
-    pdf.cell(40, 6, "Gesamt (Netto)", border=1, align='R', new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font('Helvetica', 'B', 9)
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(95, 6, "  Beschreibung", border=1, fill=True)
+    pdf.cell(20, 6, "Menge", border=1, align='C', fill=True)
+    pdf.cell(30, 6, "Einzelpreis", border=1, align='R', fill=True)
+    pdf.cell(35, 6, "Gesamt (Netto)", border=1, align='R', fill=True, new_x="LMARGIN", new_y="NEXT")
 
-    pdf.set_font('Helvetica', '', 10)
+    pdf.set_font('Helvetica', '', 9)
     netto_summe = 0.0
 
     for p in positionen:
@@ -76,54 +127,66 @@ def generate_rechnung_pdf(rechnung, positionen, auftrag_rec=None):
         gpreis = menge * epreis
         netto_summe += gpreis
 
-        pdf.cell(90, 6, clean_text(p.get('beschreibung', '')), border=1)
-        pdf.cell(25, 6, clean_text(str(menge)), border=1, align='C')
-        pdf.cell(35, 6, clean_text(f"{epreis:.2f} EUR"), border=1, align='R')
-        pdf.cell(40, 6, clean_text(f"{gpreis:.2f} EUR"), border=1, align='R', new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(95, 6, clean_text(f"  {p.get('beschreibung', '')}"), border=1)
+        pdf.cell(20, 6, clean_text(str(menge)), border=1, align='C')
+        pdf.cell(30, 6, clean_text(f"{epreis:.2f} €"), border=1, align='R')
+        pdf.cell(35, 6, clean_text(f"{gpreis:.2f} €"), border=1, align='R', new_x="LMARGIN", new_y="NEXT")
 
     mwst_satz = float(rechnung.get('mwst_satz', 19.0))
     mwst_betrag = netto_summe * (mwst_satz / 100.0)
     brutto_summe = netto_summe + mwst_betrag
 
-    pdf.ln(5)
-    pdf.set_font('Helvetica', '', 10)
-    pdf.cell(150, 6, "Summe Netto:", align='R')
-    pdf.cell(40, 6, f"{netto_summe:.2f} EUR", align='R', new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+    pdf.set_font('Helvetica', '', 9)
+    pdf.cell(145, 5, "Zwischensumme Netto:", align='R')
+    pdf.cell(35, 5, f"{netto_summe:.2f} €", align='R', new_x="LMARGIN", new_y="NEXT")
 
-    pdf.cell(150, 6, f"Mehrwertsteuer ({mwst_satz}%):", align='R')
-    pdf.cell(40, 6, f"{mwst_betrag:.2f} EUR", align='R', new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(145, 5, f"zzgl. {mwst_satz}% MwSt.:", align='R')
+    pdf.cell(35, 5, f"{mwst_betrag:.2f} €", align='R', new_x="LMARGIN", new_y="NEXT")
 
-    pdf.set_font('Helvetica', 'B', 11)
-    pdf.cell(150, 8, "Gesamtauftragssumme (Brutto):", align='R')
-    pdf.cell(40, 8, f"{brutto_summe:.2f} EUR", align='R', new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font('Helvetica', 'B', 10)
+    pdf.cell(145, 7, "Gesamtbetrag (Brutto):", align='R')
+    pdf.cell(35, 7, f"{brutto_summe:.2f} €", align='R', new_x="LMARGIN", new_y="NEXT")
 
-    # Auftragsdetails & Unterschriften im PDF einbetten, falls verknüpft
+    # Zusatztext / Zahlungsbedingungen aus Firmenstammdaten
+    fuss_text = stammdaten.get("fusszeile_freitext") if stammdaten else "Vielen Dank für Ihren Auftrag!"
+    if fuss_text:
+        pdf.ln(6)
+        pdf.set_font('Helvetica', 'I', 9)
+        pdf.multi_cell(0, 4.5, clean_text(fuss_text))
+
+    # Auftragsbericht & Unterschriften
     if auftrag_rec:
-        pdf.ln(8)
-        pdf.set_font('Helvetica', 'B', 10)
-        pdf.cell(0, 6, clean_text(f"Auftragsreferenz: #{auftrag_rec.get('auftragsnummer', '-')}"), new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font('Helvetica', '', 9)
-        pdf.multi_cell(0, 5, clean_text(f"Arbeitsbericht: {auftrag_rec.get('arbeiten', '-')}"))
+        pdf.ln(4)
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.cell(0, 5, clean_text("Ausgeführte Arbeiten & Abnahme:"), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font('Helvetica', '', 8)
+        pdf.multi_cell(0, 4, clean_text(auftrag_rec.get('arbeiten', '-')))
         
         kunde_sig = auftrag_rec.get('kunde_unterschrift')
         ma_sig = auftrag_rec.get('mitarbeiter_unterschrift')
         
         if kunde_sig or ma_sig:
-            pdf.ln(4)
-            pdf.set_font('Helvetica', 'B', 9)
-            pdf.cell(0, 5, clean_text("Abnahmeprotokoll & Unterschriften:"), new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(2)
             if kunde_sig:
-                add_signature_to_pdf(pdf, kunde_sig, "Unterschrift Kunde (Abnahme):")
+                add_signature_to_pdf(pdf, kunde_sig, "Unterschrift Kunde:")
             if ma_sig:
-                add_signature_to_pdf(pdf, ma_sig, "Unterschrift Monteur (Ausführung):")
+                add_signature_to_pdf(pdf, ma_sig, "Unterschrift Monteur:")
 
     return pdf.output()
 
 def render_rechnungen_verwaltung(supabase):
     st.title("💶 11. Rechnungs- & Abrechnungsmodul")
-    st.caption("Verwalten Sie den zentralen Preiskatalog, rechnen Sie Aufträge transparent ab und exportieren Sie professionelle Rechnungs-PDFs.")
+    st.caption("Verwalten Sie Firmenstammdaten, den Preiskatalog und erstellen Sie professionelle Rechnungen.")
 
-    # 1. Daten robust laden
+    # 1. Firmenstammdaten laden
+    try:
+        s_res = supabase.table("firmenstammdaten").select("*").eq("id", 1).execute()
+        stammdaten = s_res.data[0] if s_res.data else {}
+    except Exception:
+        stammdaten = {}
+
+    # 2. Weitere Daten laden
     try:
         r_res = supabase.table("rechnungen").select("*").order("erstellt_am", desc=True).execute()
         rechnungen_liste = r_res.data or []
@@ -155,22 +218,21 @@ def render_rechnungen_verwaltung(supabase):
     try:
         a_res = supabase.table("auftraege").select("*").order("erstellt_am", desc=True).execute()
         alle_auftraege = a_res.data or []
-    except Exception as e:
+    except Exception:
         alle_auftraege = []
-        st.error(f"Fehler beim Laden der Aufträge: {e}")
 
     tabs = st.tabs([
         "📄 Rechnungsübersicht & Filter", 
         "🚀 Aufträge transparent abrechnen", 
-        "⚙️ Zentraler Preiskatalog"
+        "⚙️ Zentraler Preiskatalog",
+        "🏢 Firmenstammdaten & Logo"
     ])
 
-    # Standard-Einheiten & Kategorien
     verfuegbare_einheiten = ["Std.", "Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"]
     verfuegbare_kategorien = ["Arbeitszeit", "Material", "Pauschale", "Sonstiges"]
 
     # =========================================================================
-    # TAB 1: RECHNUNGSÜBERSICHT & FILTER
+    # TAB 1: RECHNUNGSÜBERSICHT
     # =========================================================================
     with tabs[0]:
         st.subheader("Übersicht aller Rechnungen")
@@ -203,7 +265,6 @@ def render_rechnungen_verwaltung(supabase):
                 except Exception:
                     positionen = []
 
-                # Zugehörigen Auftrag laden, falls vorhanden
                 auftrag_rec = None
                 if r.get("auftrag_id"):
                     try:
@@ -248,7 +309,7 @@ def render_rechnungen_verwaltung(supabase):
                     st.markdown(f"**Summe Netto:** {netto:.2f} EUR | **MwSt.:** {mwst:.2f} EUR | **Gesamt Brutto:** **{brutto:.2f} EUR**")
                     
                     st.markdown("---")
-                    pdf_bytes = generate_rechnung_pdf(r, positionen, auftrag_rec)
+                    pdf_bytes = generate_rechnung_pdf(r, positionen, auftrag_rec, stammdaten)
                     st.download_button(
                         label=f"📥 Rechnungs-PDF herunterladen ({r.get('rechnungsnummer')})",
                         data=bytes(pdf_bytes),
@@ -258,12 +319,10 @@ def render_rechnungen_verwaltung(supabase):
                     )
 
     # =========================================================================
-    # TAB 2: TRANSPARENTE AUFTRAGSABRECHNUNG
+    # TAB 2: AUFTRAGSABRECHNUNG
     # =========================================================================
     with tabs[1]:
         st.subheader("Auftrag & Lager-Material transparent abrechnen")
-        st.caption("Wählen Sie einen Auftrag aus. Die App zeigt Ihnen exakt an, welche Arbeitsleistungen, Materialien und Unterschriften vorliegen.")
-
         if "rechnung_positionen_temp" not in st.session_state:
             st.session_state["rechnung_positionen_temp"] = []
 
@@ -359,12 +418,11 @@ def render_rechnungen_verwaltung(supabase):
                     st.rerun()
 
         st.markdown("---")
-        st.markdown("##### 🛠️ Rechnung bearbeiten & finalisieren")
+        st.markdown("##### 🛠️ Positionen hinzufügen")
 
-        st.markdown("##### Zusätzlichen Artikel aus Lager oder Vorlagen hinzufügen")
         katalog_optionen = [None] + [{"typ": "lager", "item": m} for m in lager_material_liste] + [{"typ": "vorlage", "item": v} for v in vorlagen_liste if not v.get("material_id")]
         sel_katalog_item = st.selectbox(
-            "Artikel / Vorlage wählen",
+            "Artikel / Vorlage aus Katalog wählen",
             options=katalog_optionen,
             format_func=lambda x: "--- Artikel wählen ---" if x is None else (f"[Lager] {x['item']['bezeichnung']} (Bestand: {x['item']['ist_bestand']} {x['item'].get('einheit', 'Stk.')})" if x['typ'] == 'lager' else f"[Vorlage] {x['item']['bezeichnung']} ({float(x['item']['einzelpreis_netto']):.2f} EUR)")
         )
@@ -377,7 +435,6 @@ def render_rechnungen_verwaltung(supabase):
                 auto_preis = float(kat_match["einzelpreis_netto"]) if kat_match else 0.0
             else:
                 auto_preis = float(item_data["einzelpreis_netto"])
-            
             st.info(f"💡 Hinterlegter Katalogpreis: **{auto_preis:.2f} € netto**")
 
         col_kat1, col_kat2 = st.columns([2, 1])
@@ -386,7 +443,7 @@ def render_rechnungen_verwaltung(supabase):
         with col_kat2:
             st.write("")
             st.write("")
-            if st.button("➕ Artikel hinzufügen", use_container_width=True):
+            if st.button("➕ Katalogartikel hinzufügen", use_container_width=True):
                 if sel_katalog_item:
                     item_data = sel_katalog_item["item"]
                     bez = item_data["bezeichnung"]
@@ -397,14 +454,11 @@ def render_rechnungen_verwaltung(supabase):
                     })
                     st.success(f"'{bez}' hinzugefügt!")
                     st.rerun()
-                else:
-                    st.warning("Bitte wählen Sie zuerst einen Artikel aus.")
 
         st.markdown("---")
-        st.markdown("##### Freie Position hinzufügen (mit manuellem Preis)")
         col_p1, col_p2, col_p3 = st.columns([3, 1, 1])
         with col_p1:
-            p_beschr = st.text_input("Positionsbeschreibung", placeholder="z.B. Monteurstunde / Sonderarbeit", key="frei_beschr_inp")
+            p_beschr = st.text_input("Freie Position", placeholder="z.B. Sonderarbeiten", key="frei_beschr_inp")
         with col_p2:
             p_menge = st.number_input("Menge / Std.", min_value=0.1, value=1.0, step=0.5, key="frei_menge_inp")
         with col_p3:
@@ -417,16 +471,10 @@ def render_rechnungen_verwaltung(supabase):
                     "menge": p_menge,
                     "einzelpreis_netto": p_preis
                 })
-                st.success("Freie Position hinzugefügt!")
                 st.rerun()
-            else:
-                st.warning("Bitte eine Positionsbeschreibung angeben.")
-
-        st.markdown("---")
 
         if st.session_state["rechnung_positionen_temp"]:
             st.markdown("##### 📋 Aktuelle Rechnungspositionen:")
-            
             idx_to_del = None
             for idx, p in enumerate(st.session_state["rechnung_positionen_temp"]):
                 c_p1, c_p2, c_p3, c_p4 = st.columns([4, 2, 2, 1])
@@ -440,16 +488,9 @@ def render_rechnungen_verwaltung(supabase):
                 st.session_state["rechnung_positionen_temp"].pop(idx_to_del)
                 st.rerun()
 
-            if st.button("🗑️ Alle Positionen löschen"):
-                st.session_state["rechnung_positionen_temp"] = []
-                st.rerun()
-        else:
-            st.info("Noch keine Positionen hinzugefügt.")
-
         st.markdown("---")
-
         with st.form("neue_rechnung_form"):
-            st.markdown("##### 💾 Rechnung finalisieren & speichern")
+            st.markdown("##### 💾 Rechnung finalisieren")
             col1, col2 = st.columns(2)
             with col1:
                 default_r_nr = f"RE-{datetime.now().strftime('%Y%m%d')}-01"
@@ -491,18 +532,15 @@ def render_rechnungen_verwaltung(supabase):
                         st.success(f"Rechnung {r_nummer} erfolgreich erstellt!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Fehler beim Speichern der Rechnung: {e}")
+                        st.error(f"Fehler: {e}")
 
     # =========================================================================
     # TAB 3: ZENTRALER PREISKATALOG
     # =========================================================================
     with tabs[2]:
         st.subheader("⚙️ Zentraler Preiskatalog & Stammdaten")
-        st.caption("Legen Sie hier alle Verkaufspreise fest und pflegen Sie Ihre Vorlagen.")
-
         tab_kat_lager, tab_kat_allg = st.tabs(["📦 Lager-Artikel Preise", "📋 Allgemeine Vorlagen"])
 
-        # --- SUB-TAB 1: LAGER-ARTIKEL PREISE ---
         with tab_kat_lager:
             st.markdown("##### Feste Verkaufspreise für Ihre Lagerartikel definieren")
             if not lager_material_liste:
@@ -521,42 +559,25 @@ def render_rechnungen_verwaltung(supabase):
                         with col_lp2:
                             st.write(f"Einheit: {mat.get('einheit', 'Stk.')}")
                         with col_lp3:
-                             neuer_kat_preis = st.number_input(
-                                "Netto-Verkaufspreis (€)",
-                                min_value=0.0,
-                                value=aktiver_preis,
-                                step=1.0,
-                                key=f"input_p_{m_id}",
-                                label_visibility="collapsed"
-                            )
+                             neuer_kat_preis = st.number_input("Netto-Preis (€)", min_value=0.0, value=aktiver_preis, step=1.0, key=f"input_p_{m_id}", label_visibility="collapsed")
                         with col_lp4:
                             b_save_p = st.form_submit_button("💾 Speichern", use_container_width=True)
 
                         if b_save_p:
                             try:
                                 if existierende_vorlage:
-                                    supabase.table("rechnung_vorlagen").update({
-                                        "einzelpreis_netto": neuer_kat_preis,
-                                        "einheit": mat.get('einheit', 'Stk.')
-                                    }).eq("id", existierende_vorlage["id"]).execute()
+                                    supabase.table("rechnung_vorlagen").update({"einzelpreis_netto": neuer_kat_preis, "einheit": mat.get('einheit', 'Stk.')}).eq("id", existierende_vorlage["id"]).execute()
                                 else:
-                                    supabase.table("rechnung_vorlagen").insert({
-                                        "bezeichnung": mat["bezeichnung"],
-                                        "kategorie": "Material",
-                                        "einheit": mat.get('einheit', 'Stk.'),
-                                        "einzelpreis_netto": neuer_kat_preis,
-                                        "material_id": m_id
-                                    }).execute()
+                                    supabase.table("rechnung_vorlagen").insert({"bezeichnung": mat["bezeichnung"], "kategorie": "Material", "einheit": mat.get('einheit', 'Stk.'), "einzelpreis_netto": neuer_kat_preis, "material_id": m_id}).execute()
                                 st.toast(f"Preis für '{mat['bezeichnung']}' gespeichert!", icon="🎯")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Fehler: {e}")
 
-        # --- SUB-TAB 2: ALLGEMEINE VORLAGEN (MIT DROPDOWNS FÜR KATEGORIE & EINHEIT) ---
         with tab_kat_allg:
             st.markdown("##### ➕ Neue allgemeine Vorlage anlegen")
             with st.form("neue_vorlage_form"):
-                v_bech_frei = st.text_input("Bezeichnung *", placeholder="z. B. Monteurstunde Standard oder Anfahrtspauschale")
+                v_bech_frei = st.text_input("Bezeichnung *", placeholder="z. B. Monteurstunde Standard")
                 col_v1, col_v2, col_v3 = st.columns(3)
                 with col_v1:
                     v_kat = st.selectbox("Kategorie", verfuegbare_kategorien)
@@ -566,55 +587,36 @@ def render_rechnungen_verwaltung(supabase):
                     v_preis = st.number_input("Nettopreis (EUR) *", min_value=0.0, value=65.0, step=5.0)
 
                 btn_save_vorl = st.form_submit_button("➕ Allgemeine Vorlage speichern", type="primary", use_container_width=True)
-                if btn_save_vorl:
-                    if v_bech_frei.strip():
-                        try:
-                            supabase.table("rechnung_vorlagen").insert({
-                                "bezeichnung": v_bech_frei.strip(),
-                                "kategorie": v_kat,
-                                "einheit": v_einh,
-                                "einzelpreis_netto": v_preis,
-                                "material_id": None
-                            }).execute()
-                            st.success(f"Vorlage '{v_bech_frei.strip()}' erfolgreich gespeichert!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Fehler: {e}")
-                    else:
-                        st.warning("Bitte eine Bezeichnung eingeben.")
+                if btn_save_vorl and v_bech_frei.strip():
+                    try:
+                        supabase.table("rechnung_vorlagen").insert({"bezeichnung": v_bech_frei.strip(), "kategorie": v_kat, "einheit": v_einh, "einzelpreis_netto": v_preis, "material_id": None}).execute()
+                        st.success("Vorlage gespeichert!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Fehler: {e}")
 
             st.markdown("---")
-            st.markdown("##### ✏️ Vorhandene allgemeine Vorlagen bearbeiten oder löschen")
+            st.markdown("##### ✏️ Vorhandene allgemeine Vorlagen bearbeiten")
             freie_vorlagen = [v for v in vorlagen_liste if not v.get("material_id")]
             if freie_vorlagen:
-                edit_sel_id = st.selectbox(
-                    "Vorlage zum Bearbeiten auswählen", 
-                    options=[None] + [v["id"] for v in freie_vorlagen], 
-                    format_func=lambda x: "--- Bitte wählen ---" if x is None else next((f"{v['bezeichnung']} ({v['kategorie']} - {float(v['einzelpreis_netto']):.2f} €)" for v in freie_vorlagen if v["id"] == x), "")
-                )
-                
+                edit_sel_id = st.selectbox("Vorlage wählen", options=[None] + [v["id"] for v in freie_vorlagen], format_func=lambda x: "--- Bitte wählen ---" if x is None else next((f"{v['bezeichnung']} ({v['kategorie']} - {float(v['einzelpreis_netto']):.2f} €)" for v in freie_vorlagen if v["id"] == x), ""))
                 if edit_sel_id:
                     selected_v = next((v for v in freie_vorlagen if v["id"] == edit_sel_id), None)
                     if selected_v:
                         with st.form(f"form_edit_vorlage_{edit_sel_id}"):
-                            st.write(f"**Bearbeite Vorlage:** {selected_v['bezeichnung']}")
                             ed_bez = st.text_input("Bezeichnung", value=selected_v.get("bezeichnung", ""))
                             
-                            # Kategorie Dropdown
                             current_kat = selected_v.get("kategorie", "Arbeitszeit")
                             kats_bearb = list(verfuegbare_kategorien)
                             if current_kat not in kats_bearb:
                                 kats_bearb.append(current_kat)
-                            kat_idx = kats_bearb.index(current_kat) if current_kat in kats_bearb else 0
-                            ed_kat = st.selectbox("Kategorie", kats_bearb, index=kat_idx)
+                            ed_kat = st.selectbox("Kategorie", kats_bearb, index=kats_bearb.index(current_kat))
 
-                            # Einheit Dropdown
                             current_einh = selected_v.get("einheit", "Std.")
                             einh_bearb = list(verfuegbare_einheiten)
                             if current_einh not in einh_bearb:
                                 einh_bearb.append(current_einh)
-                            einh_idx = einh_bearb.index(current_einh) if current_einh in einh_bearb else 0
-                            ed_einh = st.selectbox("Einheit", einh_bearb, index=einh_idx)
+                            ed_einh = st.selectbox("Einheit", einh_bearb, index=einh_bearb.index(current_einh))
 
                             ed_preis = st.number_input("Nettopreis (EUR)", min_value=0.0, value=float(selected_v.get("einzelpreis_netto", 0.0)), step=5.0)
                             
@@ -626,17 +628,11 @@ def render_rechnungen_verwaltung(supabase):
                                 
                             if btn_update:
                                 try:
-                                    supabase.table("rechnung_vorlagen").update({
-                                        "bezeichnung": ed_bez.strip(),
-                                        "kategorie": ed_kat,
-                                        "einheit": ed_einh,
-                                        "einzelpreis_netto": ed_preis
-                                    }).eq("id", edit_sel_id).execute()
-                                    st.success("Vorlage erfolgreich aktualisiert!")
+                                    supabase.table("rechnung_vorlagen").update({"bezeichnung": ed_bez.strip(), "kategorie": ed_kat, "einheit": ed_einh, "einzelpreis_netto": ed_preis}).eq("id", edit_sel_id).execute()
+                                    st.success("Vorlage aktualisiert!")
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Fehler: {e}")
-                                    
                             if btn_delete:
                                 try:
                                     supabase.table("rechnung_vorlagen").delete().eq("id", edit_sel_id).execute()
@@ -644,5 +640,73 @@ def render_rechnungen_verwaltung(supabase):
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Fehler: {e}")
-            else:
-                st.info("Noch keine allgemeinen Vorlagen angelegt.")
+
+    # =========================================================================
+    # TAB 4: FIRMENSTAMMDATEN & LOGO
+    # =========================================================================
+    with tabs[3]:
+        st.subheader("🏢 Firmenstammdaten, Bankverbindung & Logo")
+        st.caption("Diese Angaben erscheinen automatisch im Kopf- und Fußbereich aller generierten Rechnungs-PDFs.")
+
+        with st.form("form_firmenstammdaten"):
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                f_name = st.text_input("Firmenname *", value=stammdaten.get("firmenname", "Elektro Enterprise GmbH"))
+                f_inh = st.text_input("Inhaber / Geschäftsführer", value=stammdaten.get("inhaber", ""))
+                f_str = st.text_input("Straße & Hausnummer", value=stammdaten.get("strasse", ""))
+                f_plz = st.text_input("PLZ & Ort", value=stammdaten.get("plz_ort", ""))
+                f_tel = st.text_input("Telefonnummer", value=stammdaten.get("telefon", ""))
+                f_email = st.text_input("E-Mail-Adresse", value=stammdaten.get("email", ""))
+
+            with col_f2:
+                f_bank = st.text_input("Bankverbindung (Bankname)", value=stammdaten.get("bankname", ""))
+                f_iban = st.text_input("IBAN", value=stammdaten.get("iban", ""))
+                f_bic = st.text_input("BIC", value=stammdaten.get("bic", ""))
+                f_stnr = st.text_input("Steuernummer", value=stammdaten.get("steuernummer", ""))
+                f_ustid = st.text_input("USt-IdNr.", value=stammdaten.get("ust_id", ""))
+
+            st.markdown("---")
+            st.markdown("##### 🖼️ Firmenlogo für Rechnungs-Kopfzeile")
+            
+            logo_aktuell = stammdaten.get("logo_base64")
+            if logo_aktuell:
+                st.image(logo_aktuell, caption="Aktuelles Rechnungs-Logo", width=200)
+
+            uploaded_logo = st.file_uploader("Neues Logo hochladen (PNG oder JPG)", type=["png", "jpg", "jpeg"])
+            
+            new_logo_b64 = logo_aktuell
+            if uploaded_logo:
+                bytes_data = uploaded_logo.getvalue()
+                encoded = base64.b64encode(bytes_data).decode('utf-8')
+                mime_type = uploaded_logo.type
+                new_logo_b64 = f"data:{mime_type};base64,{encoded}"
+                st.image(bytes_data, caption="Vorschau neues Logo", width=200)
+
+            st.markdown("---")
+            f_fuss = st.text_area("Standard-Text unter Rechnungen (Zahlungsziel, Dankeschön)", value=stammdaten.get("fusszeile_freitext", "Vielen Dank für Ihren Auftrag! Bitte überweisen Sie den Rechnungsbetrag innerhalb von 14 Tagen."), height=80)
+
+            btn_save_stamm = st.form_submit_button("💾 Firmenstammdaten & Logo speichern", type="primary", use_container_width=True)
+
+            if btn_save_stamm:
+                try:
+                    payload = {
+                        "id": 1,
+                        "firmenname": f_name.strip(),
+                        "inhaber": f_inh.strip(),
+                        "strasse": f_str.strip(),
+                        "plz_ort": f_plz.strip(),
+                        "telefon": f_tel.strip(),
+                        "email": f_email.strip(),
+                        "bankname": f_bank.strip(),
+                        "iban": f_iban.strip(),
+                        "bic": f_bic.strip(),
+                        "steuernummer": f_stnr.strip(),
+                        "ust_id": f_ustid.strip(),
+                        "logo_base64": new_logo_b64,
+                        "fusszeile_freitext": f_fuss.strip()
+                    }
+                    supabase.table("firmenstammdaten").upsert(payload).execute()
+                    st.toast("Firmenstammdaten & Logo erfolgreich gespeichert!", icon="🏢")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Fehler beim Speichern der Stammdaten: {e}")

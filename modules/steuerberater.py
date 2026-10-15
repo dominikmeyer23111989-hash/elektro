@@ -199,12 +199,21 @@ def berechne_monatsdaten_fuer_ma(supabase, ma, monat_auswahl, jahr_auswahl):
     }
 
 def hat_recht(modul_id, aktion="sehen"):
-    """Prüft über die app.py-Logik, ob das Recht vorliegt."""
+    """Prüft anhand der in der DB hinterlegten rollen['erlaubte_menues'], ob die Aktion erlaubt ist."""
     user = st.session_state.get("user_data", {})
-    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
-        return True
-    rechte = user.get("rechte", [])
-    return f"{modul_id}_{aktion}" in rechte
+    
+    # Rollen-Objekt aus der Datenbank prüfen
+    rollen_obj = user.get("rollen") or {}
+    erlaubte_menues = rollen_obj.get("erlaubte_menues", [])
+    
+    # Fallback für alte Rechte-Listen oder Admin-Rollen
+    if not erlaubte_menues:
+        alte_rechte = user.get("rechte", [])
+        if f"{modul_id}_{aktion}" in alte_rechte or user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+            return True
+        return False
+
+    return f"{modul_id}_{aktion}" in erlaubte_menues
 
 def render_steuerberater_export(supabase):
     st.title("📊 Monatsabrechnung & Steuerberater-Export")

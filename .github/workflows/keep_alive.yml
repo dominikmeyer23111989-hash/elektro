@@ -1,0 +1,15 @@
+name: App Keep-Alive
+
+on:
+  schedule:
+    # Läuft alle 3 Tage um 00:00 Uhr
+    - cron: '0 0 */3 * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit App
+        run: |
+          curl -I https://elektro-kmcdkbpue9vbok3q4vnur.streamlit.app

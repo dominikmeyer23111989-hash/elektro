@@ -104,7 +104,7 @@ def hat_recht(modul_id, aktion="sehen"):
     return f"{modul_id}_{aktion}" in rechte
 
 def render_lager_verwaltung(supabase):
-    st.title("📦 5. Lager- & Materialverwaltung")
+    st.title("📦 2. Lager- & Materialverwaltung")
     st.caption("High-Speed Lager: Turbo-Scan, Warenkorb, Sidebar-Warnungen, unterbrechbare Inventur & Logs.")
 
     if not hat_recht("2", "sehen"):

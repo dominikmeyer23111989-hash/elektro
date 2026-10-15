@@ -56,13 +56,17 @@ def render_tv_dashboard(supabase):
                 show_fz = st.checkbox("🚐 Zugewiesenes Fahrzeug anzeigen", value=True, key="cfg_fz", disabled=not darf_bearbeiten)
                 show_tm = st.checkbox("👷 Einsatz-Team anzeigen", value=True, key="cfg_tm", disabled=not darf_bearbeiten)
                 show_arb = st.checkbox("⚡ Auszuführende Arbeiten anzeigen", value=True, key="cfg_arb", disabled=not darf_bearbeiten)
+                show_rech = st.checkbox("💶 Offene Rechnungen anzeigen", value=True, key="cfg_rech", disabled=not darf_bearbeiten)
+                show_lager = st.checkbox("📦 Lager-Bestandswarnungen anzeigen", value=True, key="cfg_lager", disabled=not darf_bearbeiten)
 
-        # Konfiguration in Session State speichern, damit das Dashboard darauf zugreifen kann
+        # Konfiguration in Session State speichern
         st.session_state["tv_config"] = {
             "status_filter": selected_statuses,
             "show_fahrzeug": show_fz,
             "show_team": show_tm,
             "show_arbeiten": show_arb,
+            "show_rechnungen": show_rech,
+            "show_lager": show_lager,
             "refresh_sekunden": refresh_sec
         }
 
@@ -91,6 +95,8 @@ def render_tv_dashboard(supabase):
         "show_fahrzeug": True,
         "show_team": True,
         "show_arbeiten": True,
+        "show_rechnungen": True,
+        "show_lager": True,
         "refresh_sekunden": 30
     })
 
@@ -109,6 +115,9 @@ def render_tv_dashboard(supabase):
                 .badge-offen { background-color: #FF4B4B; color: white; padding: 4px 10px; border-radius: 6px; font-size: 1rem; }
                 .badge-prog { background-color: #FFA500; color: white; padding: 4px 10px; border-radius: 6px; font-size: 1rem; }
                 .badge-done { background-color: #00CC66; color: white; padding: 4px 10px; border-radius: 6px; font-size: 1rem; }
+                
+                .side-card { background-color: #1E232F; padding: 16px; border-radius: 10px; margin-bottom: 15px; color: #FFFFFF; border-left: 5px solid #007BFF; }
+                .side-card-warn { border-left-color: #FF4B4B !important; }
             </style>
         """, unsafe_allow_html=True)
 
@@ -116,76 +125,131 @@ def render_tv_dashboard(supabase):
             st.markdown('<div class="tv-header">⚡ ELEKTRO-ENTERPRISE — Live-Leitsystem</div>', unsafe_allow_html=True)
         
         current_time = datetime.now(ZoneInfo("Europe/Berlin")).strftime('%d.%m.%Y, %H:%M:%S Uhr')
-        st.markdown(f'<div class="tv-sub">Einsatzübersicht | Letzte Aktualisierung: {current_time} (Auto-Refresh alle {cfg["refresh_sekunden"]} Sek.)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="tv-sub">Einsatzübersicht, Rechnungen & Lager | Letzte Aktualisierung: {current_time} (Auto-Refresh alle {cfg["refresh_sekunden"]} Sek.)</div>', unsafe_allow_html=True)
         st.markdown("---")
 
-        selected_statuses = cfg["status_filter"]
-        if not selected_statuses:
-            st.warning("Keine Status-Filter ausgewählt.")
-            return
-
+        # Daten aus Supabase laden
         try:
-            res = supabase.table("auftraege").select("*, kunden(*), gebaeude(*), fahrzeuge(*)").in_("status", selected_statuses).order("termin_um").execute()
-            auftraege = res.data or []
+            # 1. Aufträge
+            selected_statuses = cfg["status_filter"]
+            if selected_statuses:
+                res_a = supabase.table("auftraege").select("*, kunden(*), gebaeude(*), fahrzeuge(*)").in_("status", selected_statuses).order("termin_um").execute()
+                auftraege = res_a.data or []
+            else:
+                auftraege = []
+
+            # 2. Rechnungen (Offen)
+            rechnungen = []
+            if cfg["show_rechnungen"]:
+                res_r = supabase.table("rechnungen").select("*").eq("status", "Offen").order("erstellt_am", desc=True).limit(6).execute()
+                rechnungen = res_r.data or []
+
+            # 3. Lagerwarnungen (Bestand <= Sollbestand)
+            lager_warnungen = []
+            if cfg["show_lager"]:
+                res_m = supabase.table("lager_material").select("*").order("bezeichnung").execute()
+                alle_m = res_m.data or []
+                lager_warnungen = [m for m in alle_m if int(m.get('ist_bestand', 0)) <= int(m.get('soll_bestand', 0))]
         except Exception as e:
             st.error(f"Fehler beim Laden der Live-Daten: {e}")
-            auftraege = []
+            auftraege, rechnungen, lager_warnungen = [], [], []
 
-        if not auftraege:
-            st.markdown("<h2 style='text-align: center; color: #808080; margin-top: 50px;'>🎉 Aktuell sind keine Aufträge mit diesen Filtern vorhanden.</h2>", unsafe_allow_html=True)
-            return
+        # Layout-Aufteilung: Links Aufträge, Rechts (optional) Rechnungen & Lagerwarnungen
+        has_sidebar_content = cfg["show_rechnungen"] or cfg["show_lager"]
 
-        col1, col2 = st.columns(2)
+        if has_sidebar_content:
+            col_main, col_side = st.columns([2.2, 1])
+        else:
+            col_main = st.container()
 
-        for idx, a in enumerate(auftraege):
-            target_col = col1 if idx % 2 == 0 else col2
-            
-            try:
-                team_res = supabase.table("auftrag_mitarbeiter").select("mitarbeiter(vorname, nachname)").eq("auftrag_id", a["id"]).execute()
-                team_names = ", ".join([f"{t['mitarbeiter']['vorname']} {t['mitarbeiter']['nachname']}" for t in team_res.data if t.get("mitarbeiter")])
-            except Exception:
-                team_names = "Nicht zugewiesen"
-
-            kunde = a.get("kunden") or {}
-            gebaeude = a.get("gebaeude") or {}
-            fahrzeug = a.get("fahrzeuge") or {}
-
-            k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}".strip() or a.get("freitext_kunde") or "Spontankunde"
-            g_adr = f"{gebaeude.get('strasse', '')} {gebaeude.get('hausnummer', '')}, {gebaeude.get('ort', '')}" if gebaeude else a.get("freitext_ort") or "Keine Objektadresse"
-            
-            f_marke = fahrzeug.get('marke') or fahrzeug.get('titel') or ''
-            f_kennz = fahrzeug.get('kennzeichen') or ''
-            f_info = f"{f_marke} ({f_kennz})" if f_kennz else (f_marke or "Kein Fahrzeug")
-            
-            status = a.get("status")
-            if status == "In Bearbeitung":
-                card_class = "order-card order-in-prog"
-                badge = '<span class="badge-prog">🟡 In Bearbeitung</span>'
-            elif status == "Erledigt":
-                card_class = "order-card order-done"
-                badge = '<span class="badge-done">🟢 Erledigt</span>'
+        with col_main:
+            st.markdown("### 📋 Aktuelle Aufträge")
+            if not auftraege:
+                st.markdown("<h4 style='color: #808080;'>Keine Aufträge mit diesen Filtern vorhanden.</h4>", unsafe_allow_html=True)
             else:
-                card_class = "order-card"
-                badge = '<span class="badge-offen">🔴 Offener Auftrag</span>'
+                # Unterteilung der Aufträge in zwei Unterspalten für schöne Grid-Ansicht
+                sub_c1, sub_c2 = st.columns(2)
+                for idx, a in enumerate(auftraege):
+                    target_sub_col = sub_c1 if idx % 2 == 0 else sub_c2
+                    
+                    try:
+                        team_res = supabase.table("auftrag_mitarbeiter").select("mitarbeiter(vorname, nachname)").eq("auftrag_id", a["id"]).execute()
+                        team_names = ", ".join([f"{t['mitarbeiter']['vorname']} {t['mitarbeiter']['nachname']}" for t in team_res.data if t.get("mitarbeiter")])
+                    except Exception:
+                        team_names = "Nicht zugewiesen"
 
-            arbeiten_html = f'<div class="order-detail"><b>⚡ Arbeiten:</b> {a.get("arbeiten")}</div>' if cfg["show_arbeiten"] else ""
-            team_html = f'<div class="order-detail"><b>👷 Team:</b> {team_names}</div>' if cfg["show_team"] else ""
-            fahrzeug_html = f'<div class="order-detail"><b>🚐 Fahrzeug:</b> {f_info}</div>' if cfg["show_fahrzeug"] else ""
+                    kunde = a.get("kunden") or {}
+                    gebaeude = a.get("gebaeude") or {}
+                    fahrzeug = a.get("fahrzeuge") or {}
 
-            with target_col:
-                st.markdown(f"""
-                    <div class="{card_class}">
-                        <div class="order-title">
-                            <span>#{a.get('auftragsnummer')}</span>
-                            <span>{badge}</span>
-                        </div>
-                        <div class="order-detail"><b>👤 Kunde:</b> {k_name}</div>
-                        <div class="order-detail"><b>📍 Objekt:</b> {g_adr}</div>
-                        {arbeiten_html}
-                        <div class="order-detail"><b>🕒 Termin:</b> {format_de_zeit(a.get('termin_um'))}</div>
-                        {team_html}
-                        {fahrzeug_html}
-                    </div>
-                """, unsafe_allow_html=True)
+                    k_name = f"{kunde.get('vorname', '')} {kunde.get('nachname', '')}".strip() or a.get("freitext_kunde") or "Spontankunde"
+                    g_adr = f"{gebaeude.get('strasse', '')} {gebaeude.get('hausnummer', '')}, {gebaeude.get('ort', '')}" if gebaeude else a.get("freitext_ort") or "Keine Objektadresse"
+                    
+                    f_marke = fahrzeug.get('marke') or fahrzeug.get('titel') or ''
+                    f_kennz = fahrzeug.get('kennzeichen') or ''
+                    f_info = f"{f_marke} ({f_kennz})" if f_kennz else (f_marke or "Kein Fahrzeug")
+                    
+                    status = a.get("status")
+                    if status == "In Bearbeitung":
+                        card_class = "order-card order-in-prog"
+                        badge = '<span class="badge-prog">🟡 In Bearbeitung</span>'
+                    elif status == "Erledigt":
+                        card_class = "order-card order-done"
+                        badge = '<span class="badge-done">🟢 Erledigt</span>'
+                    else:
+                        card_class = "order-card"
+                        badge = '<span class="badge-offen">🔴 Offener Auftrag</span>'
+
+                    arbeiten_html = f'<div class="order-detail"><b>⚡ Arbeiten:</b> {a.get("arbeiten")}</div>' if cfg["show_arbeiten"] else ""
+                    team_html = f'<div class="order-detail"><b>👷 Team:</b> {team_names}</div>' if cfg["show_team"] else ""
+                    fahrzeug_html = f'<div class="order-detail"><b>🚐 Fahrzeug:</b> {f_info}</div>' if cfg["show_fahrzeug"] else ""
+
+                    with target_sub_col:
+                        st.markdown(f"""
+                            <div class="{card_class}">
+                                <div class="order-title">
+                                    <span>#{a.get('auftragsnummer')}</span>
+                                    <span>{badge}</span>
+                                </div>
+                                <div class="order-detail"><b>👤 Kunde:</b> {k_name}</div>
+                                <div class="order-detail"><b>📍 Objekt:</b> {g_adr}</div>
+                                {arbeiten_html}
+                                <div class="order-detail"><b>🕒 Termin:</b> {format_de_zeit(a.get('termin_um'))}</div>
+                                {team_html}
+                                {fahrzeug_html}
+                            </div>
+                        """, unsafe_allow_html=True)
+
+        if has_sidebar_content:
+            with col_side:
+                # 1. Offene Rechnungen anzeigen
+                if cfg["show_rechnungen"]:
+                    st.markdown("### 💶 Offene Rechnungen")
+                    if not rechnungen:
+                        st.success("✅ Keine offenen Rechnungen.")
+                    else:
+                        for r in rechnungen:
+                            st.markdown(f"""
+                                <div class="side-card">
+                                    <b>Rechnung #{r.get('rechnungsnummer')}</b><br>
+                                    👤 {r.get('kunde_name', 'Kunde')}<br>
+                                    📅 Datum: {r.get('rechnungs_datum', '-')}
+                                </div>
+                            """, unsafe_allow_html=True)
+
+                # 2. Lager-Bestandswarnungen anzeigen
+                if cfg["show_lager"]:
+                    st.markdown("### 📦 Lager-Warnungen")
+                    if not lager_warnungen:
+                        st.success("✅ Alle Bestände im grünen Bereich!")
+                    else:
+                        for wm in lager_warnungen[:6]: # Maximal 6 anzeigen für Übersichtlichkeit auf dem TV
+                            st.markdown(f"""
+                                <div class="side-card side-card-warn">
+                                    <b>{wm.get('bezeichnung')}</b><br>
+                                    📍 Ort: <code>{wm.get('lagerort', '-')}</code><br>
+                                    Ist: <b>{wm.get('ist_bestand')} {wm.get('einheit', 'Stk.')}</b> | Soll: {wm.get('soll_bestand')}
+                                </div>
+                            """, unsafe_allow_html=True)
 
     render_live_content()

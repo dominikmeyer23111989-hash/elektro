@@ -156,8 +156,9 @@ def render_lager_verwaltung(supabase):
         "📜 Entnahme-Logs"
     ])
 
-    # Standard-Kategorien für Dropdowns
-    verfuegbare_kategorien = ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Material",  "Sonstiges", "Allgemein"]
+    # Standard-Auswahlmöglichkeiten
+    verfuegbare_kategorien = ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Material", "Arbeitszeit", "Pauschale", "Sonstiges", "Allgemein"]
+    verfuegbare_einheiten = ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"]
 
     # --- TAB 1: BESTANDSÜBERSICHT ---
     with tabs[0]:
@@ -439,7 +440,7 @@ def render_lager_verwaltung(supabase):
                     n_artnr = st.text_input("Artikelnummer / Barcode *", placeholder="z.B. EAN oder interner Code")
                     n_kategorie = st.selectbox("Kategorie", verfuegbare_kategorien)
                 with col_a2:
-                    n_einheit = st.selectbox("Einheit", ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"])
+                    n_einheit = st.selectbox("Einheit", verfuegbare_einheiten)
                     n_lagerort = st.text_input("📍 Lagerort / Regal", placeholder="z.B. Regal A1, Fach 3")
                     
                     col_b1, col_b2 = st.columns(2)
@@ -481,7 +482,7 @@ def render_lager_verwaltung(supabase):
                 e_bezeichnung = st.text_input("Bezeichnung", value=aktiver_mat.get('bezeichnung', ''))
                 e_artnr = st.text_input("Artikelnummer / Barcode", value=aktiver_mat.get('artikelnummer', ''))
                 
-                # Kategorie als Selectbox statt Textfeld
+                # Kategorie als Selectbox
                 aktuelle_kat = aktiver_mat.get('kategorie', 'Allgemein')
                 kats_bearb = list(verfuegbare_kategorien)
                 if aktuelle_kat not in kats_bearb:
@@ -489,7 +490,14 @@ def render_lager_verwaltung(supabase):
                 kat_idx = kats_bearb.index(aktuelle_kat) if aktuelle_kat in kats_bearb else 0
                 e_kategorie = st.selectbox("Kategorie", kats_bearb, index=kat_idx)
 
-                e_einheit = st.text_input("Einheit", value=aktiver_mat.get('einheit', 'Stk.'))
+                # Einheit als Selectbox
+                aktuelle_einheit = aktiver_mat.get('einheit', 'Stk.')
+                einh_bearb = list(verfuegbare_einheiten)
+                if aktuelle_einheit not in einh_bearb:
+                    einh_bearb.append(aktuelle_einheit)
+                einh_idx = einh_bearb.index(aktuelle_einheit) if aktuelle_einheit in einh_bearb else 0
+                e_einheit = st.selectbox("Einheit", einh_bearb, index=einh_idx)
+
                 e_lagerort = st.text_input("📍 Lagerort / Regal", value=aktiver_mat.get('lagerort', ''))
                 
                 c_b1, c_b2 = st.columns(2)

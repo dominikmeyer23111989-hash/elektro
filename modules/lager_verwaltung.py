@@ -157,7 +157,7 @@ def render_lager_verwaltung(supabase):
     ])
 
     # Standard-Auswahlmöglichkeiten
-    verfuegbare_kategorien = ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Material", "Arbeitszeit", "Pauschale", "Sonstiges", "Allgemein"]
+    verfuegbare_kategorien = ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Material",  "Sonstiges", "Allgemein"]
     verfuegbare_einheiten = ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"]
 
     # --- TAB 1: BESTANDSÜBERSICHT ---

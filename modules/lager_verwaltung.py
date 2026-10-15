@@ -121,8 +121,10 @@ def render_lager_verwaltung(supabase):
         st.error("⛔ Sie haben keine Berechtigung, das Lager-Modul aufzurufen.")
         return
 
-    darf_bearbeiten = hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
-    darf_loeschen = hat_recht("2", "loeschen") or hat_recht("2", "bearbeiten") or hat_recht("2", "erstellen")
+    # SAUBERE TRENNUNG DER BERECHTIGUNGEN:
+    darf_buchen = hat_recht("2", "erstellen")       # Für Warenkorb, Ein-/Ausbuchtungen & Inventur
+    darf_bearbeiten = hat_recht("2", "bearbeiten")  # Nur für Artikeldetails ändern / anlegen & CSV-Import
+    darf_loeschen = hat_recht("2", "loeschen")      # Nur für Artikel löschen
 
     try:
         m_res = supabase.table("lager_material").select("*").order("bezeichnung").execute()
@@ -166,7 +168,6 @@ def render_lager_verwaltung(supabase):
         "📜 Entnahme-Logs"
     ])
 
-    # Standard-Auswahlmöglichkeiten
     verfuegbare_kategorien = ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Material", "Sonstiges", "Allgemein"]
     verfuegbare_einheiten = ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"]
 
@@ -255,13 +256,13 @@ def render_lager_verwaltung(supabase):
 
     # --- TAB 2: TURBO-SCAN & MULTIBUCHUNG ---
     with tabs[1]:
-        st.subheader("⚡ Turbo-Scan & Multibuchung")
+        st.subheader("⚡ Turbo-Scan & Multibuchung (Entnahme / Zugang)")
         st.caption("QR-Code fotografieren – der Artikel wird automatisch erkannt und sofort in den Warenkorb gelegt!")
 
         if not material_liste:
             st.warning("Noch keine Artikel im Lager vorhanden.")
-        elif not darf_bearbeiten:
-            st.error("⛔ Ihr Account hat keine Berechtigung.")
+        elif not darf_buchen:
+            st.error("⛔ Ihr Account hat keine Berechtigung, Material zu buchen oder zu entnehmen (Recht 'Erstellen' fehlt).")
         else:
             col_m_mode, col_m_menge = st.columns(2)
             with col_m_mode:
@@ -441,7 +442,7 @@ def render_lager_verwaltung(supabase):
     with tabs[3]:
         st.subheader("➕ Neuen Artikel anlegen")
         if not darf_bearbeiten:
-            st.error("⛔ Keine Berechtigung.")
+            st.error("⛔ Keine Berechtigung zum Anlegen von Artikeln (Recht 'Bearbeiten' fehlt).")
         else:
             with st.form("neuer_artikel_form"):
                 col_a1, col_a2 = st.columns(2)
@@ -483,42 +484,44 @@ def render_lager_verwaltung(supabase):
         st.subheader("✏️ Artikel bearbeiten oder löschen")
         if not material_liste:
             st.warning("Keine Artikel vorhanden.")
+        elif not darf_bearbeiten and not darf_loeschen:
+            st.error("⛔ Keine Berechtigung zum Bearbeiten oder Löschen von Artikeln.")
         else:
             bearb_optionen = {f"{m['bezeichnung']} (Ort: {m.get('lagerort', '-')}) [Code: {m.get('artikelnummer', '-')}]": m for m in material_liste}
             auswahl_bearb = st.selectbox("Artikel für Bearbeitung wählen", options=list(bearb_optionen.keys()), key="select_bearb_artikel")
             aktiver_mat = bearb_optionen[auswahl_bearb]
 
             with st.form("artikel_bearbeiten_form"):
-                e_bezeichnung = st.text_input("Bezeichnung", value=aktiver_mat.get('bezeichnung', ''))
-                e_artnr = st.text_input("Artikelnummer / Barcode", value=aktiver_mat.get('artikelnummer', ''))
+                e_bezeichnung = st.text_input("Bezeichnung", value=aktiver_mat.get('bezeichnung', ''), disabled=not darf_bearbeiten)
+                e_artnr = st.text_input("Artikelnummer / Barcode", value=aktiver_mat.get('artikelnummer', ''), disabled=not darf_bearbeiten)
                 
                 aktuelle_kat = aktiver_mat.get('kategorie', 'Allgemein')
                 kats_bearb = list(verfuegbare_kategorien)
                 if aktuelle_kat not in kats_bearb:
                     kats_bearb.append(aktuelle_kat)
                 kat_idx = kats_bearb.index(aktuelle_kat) if aktuelle_kat in kats_bearb else 0
-                e_kategorie = st.selectbox("Kategorie", kats_bearb, index=kat_idx)
+                e_kategorie = st.selectbox("Kategorie", kats_bearb, index=kat_idx, disabled=not darf_bearbeiten)
 
                 aktuelle_einheit = aktiver_mat.get('einheit', 'Stk.')
                 einh_bearb = list(verfuegbare_einheiten)
                 if aktuelle_einheit not in einh_bearb:
                     einh_bearb.append(aktuelle_einheit)
                 einh_idx = einh_bearb.index(aktuelle_einheit) if aktuelle_einheit in einh_bearb else 0
-                e_einheit = st.selectbox("Einheit", einh_bearb, index=einh_idx)
+                e_einheit = st.selectbox("Einheit", einh_bearb, index=einh_idx, disabled=not darf_bearbeiten)
 
-                e_lagerort = st.text_input("📍 Lagerort / Regal", value=aktiver_mat.get('lagerort', ''))
+                e_lagerort = st.text_input("📍 Lagerort / Regal", value=aktiver_mat.get('lagerort', ''), disabled=not darf_bearbeiten)
                 
                 c_b1, c_b2 = st.columns(2)
                 with c_b1:
-                    e_soll = st.number_input("Mindestbestand", min_value=0, value=int(aktiver_mat.get('soll_bestand', 5)))
+                    e_soll = st.number_input("Mindestbestand", min_value=0, value=int(aktiver_mat.get('soll_bestand', 5)), disabled=not darf_bearbeiten)
                 with c_b2:
-                    e_ist = st.number_input("Ist-Bestand", min_value=0, value=int(aktiver_mat.get('ist_bestand', 0)))
+                    e_ist = st.number_input("Ist-Bestand", min_value=0, value=int(aktiver_mat.get('ist_bestand', 0)), disabled=not darf_bearbeiten)
 
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
-                    btn_speichern = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True)
+                    btn_speichern = st.form_submit_button("💾 Änderungen speichern", type="primary", use_container_width=True, disabled=not darf_bearbeiten)
                 with col_btn2:
-                    btn_loeschen = st.form_submit_button("🗑️ Artikel löschen", use_container_width=True)
+                    btn_loeschen = st.form_submit_button("🗑️ Artikel löschen", use_container_width=True, disabled=not darf_loeschen)
 
                 if btn_speichern:
                     if darf_bearbeiten:
@@ -570,8 +573,8 @@ def render_lager_verwaltung(supabase):
 
         if not material_liste:
             st.warning("Noch keine Artikel im Lager vorhanden.")
-        elif not darf_bearbeiten:
-            st.error("⛔ Keine Berechtigung.")
+        elif not darf_buchen:
+            st.error("⛔ Keine Berechtigung zur Durchführung der Inventur (Recht 'Erstellen' fehlt).")
         else:
             h1, h2, h3, h4 = st.columns([2, 1, 1, 2])
             with h1:
@@ -694,7 +697,7 @@ def render_lager_verwaltung(supabase):
         st.caption("Laden Sie eine CSV-Tabelle hoch, um Artikel gesammelt ins Lager einzupflegen.")
         
         if not darf_bearbeiten:
-            st.error("⛔ Keine Berechtigung.")
+            st.error("⛔ Keine Berechtigung zum Importieren von CSV-Dateien (Recht 'Bearbeiten' fehlt).")
         else:
             uploaded_csv = st.file_uploader("CSV-Datei auswählen", type=["csv"])
             if uploaded_csv:

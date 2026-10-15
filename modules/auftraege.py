@@ -165,11 +165,21 @@ def generate_auftrag_pdf(a, kunde, gebaeude, fahrzeug, team_liste, material_posi
     return pdf.output()
 
 def hat_recht(modul_id, aktion="sehen"):
+    """Prüft anhand der in der DB hinterlegten rollen['erlaubte_menues'], ob die Aktion erlaubt ist."""
     user = st.session_state.get("user_data", {})
-    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
-        return True
-    rechte = user.get("rechte", [])
-    return f"{modul_id}_{aktion}" in rechte
+    
+    # Fallback für den Fall, dass das Rollen-Objekt direkt mitgebracht wird
+    rollen_obj = user.get("rollen") or {}
+    erlaubte_menues = rollen_obj.get("erlaubte_menues", [])
+    
+    # Wenn keine Rechte in der Rolle stehen, prüfen wir alternativ den alten String (Abwärtskompatibilität)
+    if not erlaubte_menues:
+        alte_rechte = user.get("rechte", [])
+        if f"{modul_id}_{aktion}" in alte_rechte or user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+            return True
+        return False
+
+    return f"{modul_id}_{aktion}" in erlaubte_menues
 
 def render_auftraege_verwaltung(supabase):
     st.title("📋 4. Auftrags- & Einsatzmanagement")

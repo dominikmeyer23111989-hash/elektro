@@ -97,11 +97,21 @@ def generiere_pdf_bericht(titel, headers, daten):
     return buffer.getvalue()
 
 def hat_recht(modul_id, aktion="sehen"):
+    """Prüft anhand der in der DB hinterlegten rollen['erlaubte_menues'], ob die Aktion erlaubt ist."""
     user = st.session_state.get("user_data", {})
-    if user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
-        return True
-    rechte = user.get("rechte", [])
-    return f"{modul_id}_{aktion}" in rechte
+    
+    # Rollen-Objekt aus der Datenbank prüfen
+    rollen_obj = user.get("rollen") or {}
+    erlaubte_menues = rollen_obj.get("erlaubte_menues", [])
+    
+    # Fallback für alte Rechte-Listen oder Admin-Rollen
+    if not erlaubte_menues:
+        alte_rechte = user.get("rechte", [])
+        if f"{modul_id}_{aktion}" in alte_rechte or user.get("rolle") in ["Admin", "Inhaber", "Chef"]:
+            return True
+        return False
+
+    return f"{modul_id}_{aktion}" in erlaubte_menues
 
 def render_lager_verwaltung(supabase):
     st.title("📦 2. Lager- & Materialverwaltung")
@@ -157,7 +167,7 @@ def render_lager_verwaltung(supabase):
     ])
 
     # Standard-Auswahlmöglichkeiten
-    verfuegbare_kategorien = ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Material",  "Sonstiges", "Allgemein"]
+    verfuegbare_kategorien = ["Kabel & Leitungen", "Schalter & Steckdosen", "Verteiler", "Kleinmaterial", "Leuchtmittel", "Werkzeug", "Material", "Sonstiges", "Allgemein"]
     verfuegbare_einheiten = ["Stk.", "Meter", "Rolle", "Paket", "Liter", "kg"]
 
     # --- TAB 1: BESTANDSÜBERSICHT ---
@@ -482,7 +492,6 @@ def render_lager_verwaltung(supabase):
                 e_bezeichnung = st.text_input("Bezeichnung", value=aktiver_mat.get('bezeichnung', ''))
                 e_artnr = st.text_input("Artikelnummer / Barcode", value=aktiver_mat.get('artikelnummer', ''))
                 
-                # Kategorie als Selectbox
                 aktuelle_kat = aktiver_mat.get('kategorie', 'Allgemein')
                 kats_bearb = list(verfuegbare_kategorien)
                 if aktuelle_kat not in kats_bearb:
@@ -490,7 +499,6 @@ def render_lager_verwaltung(supabase):
                 kat_idx = kats_bearb.index(aktuelle_kat) if aktuelle_kat in kats_bearb else 0
                 e_kategorie = st.selectbox("Kategorie", kats_bearb, index=kat_idx)
 
-                # Einheit als Selectbox
                 aktuelle_einheit = aktiver_mat.get('einheit', 'Stk.')
                 einh_bearb = list(verfuegbare_einheiten)
                 if aktuelle_einheit not in einh_bearb:
@@ -679,3 +687,62 @@ def render_lager_verwaltung(supabase):
                     mime="application/pdf",
                     key="pdf_download_inventur"
                 )
+
+    # --- TAB 7: CSV-IMPORT ---
+    with tabs[6]:
+        st.subheader("📥 Material per CSV-Datei importieren")
+        st.caption("Laden Sie eine CSV-Tabelle hoch, um Artikel gesammelt ins Lager einzupflegen.")
+        
+        if not darf_bearbeiten:
+            st.error("⛔ Keine Berechtigung.")
+        else:
+            uploaded_csv = st.file_uploader("CSV-Datei auswählen", type=["csv"])
+            if uploaded_csv:
+                try:
+                    df_import = pd.read_csv(uploaded_csv)
+                    st.write("Vorschau der importierten Daten:")
+                    st.dataframe(df_import.head(), use_container_width=True)
+
+                    if st.button("🚀 CSV-Import jetzt durchführen", type="primary"):
+                        count_imported = 0
+                        for _, row in df_import.iterrows():
+                            supabase.table("lager_material").insert({
+                                "bezeichnung": str(row.get("Bezeichnung", row.get("bezeichnung", "Unbekannt"))),
+                                "artikelnummer": str(row.get("Artikelnummer", row.get("artikelnummer", "-"))),
+                                "kategorie": str(row.get("Kategorie", row.get("kategorie", "Allgemein"))),
+                                "einheit": str(row.get("Einheit", row.get("einheit", "Stk."))),
+                                "lagerort": str(row.get("Lagerort", row.get("lagerort", "-"))),
+                                "soll_bestand": int(row.get("Soll", row.get("soll_bestand", 5))),
+                                "ist_bestand": int(row.get("Ist", row.get("ist_bestand", 10)))
+                            }).execute()
+                            count_imported += 1
+                        st.success(f"✅ {count_imported} Artikel erfolgreich aus CSV importiert!")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Fehler beim Verarbeiten der CSV: {e}")
+
+    # --- TAB 8: ENTNAHME-LOGS ---
+    with tabs[7]:
+        st.subheader("📜 Entnahme- & Bewegungshistorie")
+        st.caption("Lückenlose Protokollierung aller Ein-, Ausbuchtungen und Inventuren.")
+        
+        try:
+            log_res = supabase.table("lager_bewegungen").select("*, lager_material(bezeichnung, einheit)").order("erstellt_am", desc=True).limit(100).execute()
+            logs = log_res.data or []
+        except Exception:
+            logs = []
+
+        if not logs:
+            st.info("Bislang keine Lagerbewegungen protokolliert.")
+        else:
+            log_daten = []
+            for l in logs:
+                mat_info = l.get("lager_material") or {}
+                log_daten.append({
+                    "Datum / Uhrzeit": l.get("erstellt_am", "-")[:16].replace("T", " "),
+                    "Artikel": mat_info.get("bezeichnung", "Gelöschter Artikel"),
+                    "Aktion": l.get("art", "-"),
+                    "Menge": f"{l.get('menge', 0)} {mat_info.get('einheit', 'Stk.')}",
+                    "Kommentar / Projekt": l.get("kommentar", "-")
+                })
+            st.dataframe(pd.DataFrame(log_daten), use_container_width=True, hide_index=True)

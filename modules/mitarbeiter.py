@@ -271,7 +271,7 @@ def render_mitarbeiter_verwaltung(supabase):
         except Exception as e:
             st.error(f"Fehler: {e}")
 
-   # --- TAB 2: Neuer Mitarbeiter ---
+    # --- TAB 2: Neuer Mitarbeiter ---
     with tab_neu:
         st.subheader("Neuen Mitarbeiter im System anlegen")
         if not darf_erstellen:
@@ -284,15 +284,17 @@ def render_mitarbeiter_verwaltung(supabase):
                     vorname = st.text_input("Vorname *")
                     nachname = st.text_input("Nachname *")
                     
-                    # Flexibler Bereich von 1950 bis heute – fehlerfrei für alle Jahrgänge!
-                    geburtsdatum = st.date_input(
-                        "Geburtsdatum", 
-                        value=date(1930, 1, 1), 
-                        min_value=date(1950, 1, 1), 
-                        max_value=date.today(), 
-                        format="DD.MM.YYYY"
-                    )
+                    st.markdown("**Geburtsdatum**")
+                    col_g1, col_g2, col_g3 = st.columns(3)
+                    g_tag = col_g1.selectbox("Tag", list(range(1, 32)), index=0, key="geb_tag")
+                    g_monat = col_g2.selectbox("Monat", list(range(1, 13)), index=0, key="geb_monat")
+                    g_jahr = col_g3.selectbox("Jahr", list(range(datetime.now().year - 14, 1940, -1)), index=35, key="geb_jahr")
                     
+                    try:
+                        geburtsdatum = date(g_jahr, g_monat, g_tag)
+                    except ValueError:
+                        geburtsdatum = date(1990, 1, 1)
+
                     taetig_seit = st.date_input("Im Unternehmen tätig seit", value=date.today(), format="DD.MM.YYYY")
                     urlaubstage = st.number_input("Urlaubstage pro Jahr", value=30, min_value=0, max_value=60)
                     standard_pause = st.number_input("Standard-Pause pro Schicht (Minuten)", value=30, min_value=0, max_value=120, step=5)

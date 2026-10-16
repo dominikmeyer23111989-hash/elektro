@@ -12,4 +12,4 @@ jobs:
     steps:
       - name: Ping Streamlit App
         run: |
-          curl -I https://elektro-kmcdkbpue9vbok3q4vnur.streamlit.app
+          curl -I https://elektro-testversion.streamlit.app

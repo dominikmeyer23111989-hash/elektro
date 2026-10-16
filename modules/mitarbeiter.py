@@ -288,7 +288,10 @@ def render_mitarbeiter_verwaltung(supabase):
                     col_g1, col_g2, col_g3 = st.columns(3)
                     g_tag = col_g1.selectbox("Tag", list(range(1, 32)), index=0, key="geb_tag")
                     g_monat = col_g2.selectbox("Monat", list(range(1, 13)), index=0, key="geb_monat")
-                    g_jahr = col_g3.selectbox("Jahr", list(range(datetime.now().year - 14, 1940, -1)), index=35, key="geb_jahr")
+                    
+                    aktuelles_jahr = date.today().year
+                    jahre_liste = list(range(aktuelles_jahr - 14, 1939, -1))
+                    g_jahr = col_g3.selectbox("Jahr", jahre_liste, index=min(35, len(jahre_liste)-1), key="geb_jahr")
                     
                     try:
                         geburtsdatum = date(g_jahr, g_monat, g_tag)

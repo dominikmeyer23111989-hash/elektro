@@ -3,7 +3,7 @@ name: App Keep-Alive
 on:
   schedule:
     # Läuft alle 3 Tage um 00:00 Uhr
-    - cron: '0 0 */3 * *'
+    - cron: '0 0 */1 * *'
   workflow_dispatch:
 
 jobs:

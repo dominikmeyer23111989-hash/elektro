@@ -16,7 +16,7 @@ from modules.lager_verwaltung import render_lager_verwaltung
 from modules.rechnungen import render_rechnungen_verwaltung
 
 st.set_page_config(
-    page_title="Elektro-Enterprise Portal", 
+    page_title="Elektro-Testversion-Portal", 
     page_icon="⚡", 
     layout="wide"
 )

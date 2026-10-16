@@ -151,6 +151,15 @@ def render_mitarbeiter_verwaltung(supabase):
     except Exception:
         is_antrag_admin = user.get("rolle") in ["Admin", "Bauleiter", "Büro / Verwaltung"]
 
+    try:
+        rollen_res = supabase.table("rollen").select("*").execute()
+        rollen_liste = rollen_res.data or []
+        rollen_dict = {r["bezeichnung"]: r["id"] for r in rollen_liste}
+        rollen_id_zu_bez = {r["id"]: r["bezeichnung"] for r in rollen_liste}
+    except Exception:
+        rollen_dict = {}
+        rollen_id_zu_bez = {}
+
     tab_uebersicht, tab_neu, tab_rollen, tab_urlaub, tab_qualifikationen = st.tabs([
         "📋 Personalstamm & Status", 
         "➕ Neuer Mitarbeiter", 
@@ -180,7 +189,7 @@ def render_mitarbeiter_verwaltung(supabase):
                 st.dataframe(display_df, use_container_width=True)
                 
                 st.markdown("---")
-                st.subheader("⚙️ Mitarbeiter-Details, Kontingente & Arbeitszeitmodell bearbeiten")
+                st.subheader("⚙️ Mitarbeiter-Details, Rolle & Arbeitszeitmodell bearbeiten")
                 
                 selected_ma_id = st.selectbox(
                     "Mitarbeiter auswählen", 
@@ -193,8 +202,14 @@ def render_mitarbeiter_verwaltung(supabase):
                 with st.form("ma_edit_form"):
                     st.write(f"Bearbeite: **{selected_ma['vorname']} {selected_ma['nachname']}**")
                     
+                    aktuelle_rolle_id = selected_ma.get("rolle_id")
+                    aktuelle_rollen_bez = rollen_id_zu_bez.get(aktuelle_rolle_id, list(rollen_dict.keys())[0] if rollen_dict else "Keine Rolle")
+                    rollen_namen = list(rollen_dict.keys()) if rollen_dict else ["Keine Rolle"]
+                    rollen_index = rollen_namen.index(aktuelle_rollen_bez) if aktuelle_rollen_bez in rollen_namen else 0
+
                     col_e1, col_e2 = st.columns(2)
                     with col_e1:
+                        neue_rolle_bez = st.selectbox("Rolle / Funktion im Betrieb", options=rollen_namen, index=rollen_index, disabled=not darf_bearbeiten)
                         neuer_urlaub = st.number_input("Urlaubstage pro Jahr", min_value=0, max_value=60, value=int(selected_ma.get("urlaubstage_gesamt") or 30), disabled=not darf_bearbeiten)
                         neue_pause = st.number_input("Standard-Pause (Minuten)", min_value=0, max_value=120, value=int(selected_ma.get("standard_pause_minuten") or 30), step=5, disabled=not darf_bearbeiten)
                     with col_e2:
@@ -211,9 +226,16 @@ def render_mitarbeiter_verwaltung(supabase):
                     berechnete_wochenstunden = soll_mo + soll_di + soll_mi + soll_do + soll_fr
                     st.info(f"Ergeben automatisch **{berechnete_wochenstunden} Wochenstunden**")
                     
-                    if st.form_submit_button("Stammdaten & Arbeitszeiten aktualisieren", type="primary", use_container_width=True, disabled=not darf_bearbeiten):
+                    col_btn_up, col_btn_del = st.columns(2)
+                    with col_btn_up:
+                        btn_update_ma = st.form_submit_button("💾 Stammdaten aktualisieren", type="primary", use_container_width=True, disabled=not darf_bearbeiten)
+                    with col_btn_del:
+                        btn_delete_ma = st.form_submit_button("🗑️ Mitarbeiter löschen", use_container_width=True, disabled=not darf_loeschen)
+
+                    if btn_update_ma and darf_bearbeiten:
                         try:
                             supabase.table("mitarbeiter").update({
+                                "rolle_id": rollen_dict.get(neue_rolle_bez),
                                 "urlaubstage_gesamt": neuer_urlaub,
                                 "wochenstunden": berechnete_wochenstunden,
                                 "standard_pause_minuten": neue_pause,
@@ -224,10 +246,18 @@ def render_mitarbeiter_verwaltung(supabase):
                                 "soll_do": soll_do,
                                 "soll_fr": soll_fr
                             }).eq("id", selected_ma_id).execute()
-                            st.success("Stammdaten & Arbeitszeitmodell erfolgreich aktualisiert!")
+                            st.success("Mitarbeiterstammdaten & Rolle erfolgreich aktualisiert!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Fehler: {e}")
+
+                    if btn_delete_ma and darf_loeschen:
+                        try:
+                            supabase.table("mitarbeiter").delete().eq("id", selected_ma_id).execute()
+                            st.toast("Mitarbeiter erfolgreich gelöscht!", icon="🗑️")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Fehler beim Löschen: {e}")
 
                 st.markdown("---")
                 q_res = supabase.table("qualifikationen").select("*").eq("mitarbeiter_id", selected_ma_id).execute()
@@ -247,19 +277,14 @@ def render_mitarbeiter_verwaltung(supabase):
         if not darf_erstellen:
             st.error("⛔ Sie haben keine Berechtigung, neue Mitarbeiter anzulegen.")
         else:
-            try:
-                rollen_res = supabase.table("rollen").select("*").execute()
-                rollen_dict = {r["bezeichnung"]: r["id"] for r in rollen_res.data} if rollen_res.data else {}
-            except Exception:
-                rollen_dict = {}
-            
             with st.form("neuer_mitarbeiter_form"):
                 col1, col2 = st.columns(2)
                 with col1:
                     mitarbeiternr = st.text_input("Mitarbeiternummer *", placeholder="z. B. 1005")
                     vorname = st.text_input("Vorname *")
                     nachname = st.text_input("Nachname *")
-                    geburtsdatum = st.date_input("Geburtsdatum", value=date(1990, 1, 1), format="DD.MM.YYYY")
+                    # min_value erweitert, damit auch Jüngere (z.B. 2008) fehlerfrei wählbar sind
+                    geburtsdatum = st.date_input("Geburtsdatum", value=date(1995, 1, 1), min_value=date(1940, 1, 1), max_value=date.today(), format="DD.MM.YYYY")
                     taetig_seit = st.date_input("Im Unternehmen tätig seit", value=date.today(), format="DD.MM.YYYY")
                     urlaubstage = st.number_input("Urlaubstage pro Jahr", value=30, min_value=0, max_value=60)
                     standard_pause = st.number_input("Standard-Pause pro Schicht (Minuten)", value=30, min_value=0, max_value=120, step=5)

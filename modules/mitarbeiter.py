@@ -287,7 +287,7 @@ def render_mitarbeiter_verwaltung(supabase):
                     # Flexibler Bereich von 1950 bis heute – fehlerfrei für alle Jahrgänge!
                     geburtsdatum = st.date_input(
                         "Geburtsdatum", 
-                        value=date(1900, 1, 1), 
+                        value=date(1930, 1, 1), 
                         min_value=date(1950, 1, 1), 
                         max_value=date.today(), 
                         format="DD.MM.YYYY"

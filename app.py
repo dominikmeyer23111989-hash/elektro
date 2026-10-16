@@ -107,7 +107,7 @@ if not st.session_state["authenticated"]:
 # 2. Login- & Passwort-Wiederherstellungs-System
 # -----------------------------------------------------------------------------
 def render_login():
-    st.title("⚡ Elektro-Enterprise System")
+    st.title("⚡ Elektro-Testversion-Portal")
     st.caption("Willkommen! Bitte melden Sie sich an.")
 
     col1, col2, col3 = st.columns([1, 2, 1])

@@ -117,21 +117,32 @@ def render_login():
         # --- TAB 1: Login ---
         with tab_login:
             with st.form("login_form"):
-                identifier = st.text_input("Mitarbeiternummer oder Vorname.Nachname", placeholder="z. B. 1000")
+                identifier = st.text_input(
+                    "Mitarbeiternummer oder Name", 
+                    placeholder="z. B. 1000, Max Mustermann oder Max.Mustermann"
+                )
                 password = st.text_input("Passwort / PIN", type="password")
                 
                 submitted = st.form_submit_button("Anmelden", type="primary", use_container_width=True)
 
                 if submitted:
-                    if not identifier or not password:
+                    clean_id = identifier.strip()
+                    if not clean_id or not password:
                         st.warning("Bitte füllen Sie alle Felder aus.")
                     else:
                         try:
-                            res = supabase.table("mitarbeiter").select("*, rollen(*)").eq("ist_aktiv", True).eq("mitarbeiternummer", identifier).execute()
+                            # 1. Versuch: Suche nach Mitarbeiternummer
+                            res = supabase.table("mitarbeiter").select("*, rollen(*)").eq("ist_aktiv", True).eq("mitarbeiternummer", clean_id).execute()
                             
-                            if not res.data and "." in identifier:
-                                parts = identifier.split(".", 1)
-                                res = supabase.table("mitarbeiter").select("*, rollen(*)").eq("ist_aktiv", True).ilike("vorname", parts[0]).ilike("nachname", parts[1]).execute()
+                            # 2. Versuch: Suche nach "Vorname Nachname" (mit Leerzeichen)
+                            if not res.data and " " in clean_id:
+                                parts = clean_id.split(" ", 1)
+                                res = supabase.table("mitarbeiter").select("*, rollen(*)").eq("ist_aktiv", True).ilike("vorname", parts[0].strip()).ilike("nachname", parts[1].strip()).execute()
+
+                            # 3. Versuch: Suche nach "Vorname.Nachname" (mit Punkt)
+                            if not res.data and "." in clean_id:
+                                parts = clean_id.split(".", 1)
+                                res = supabase.table("mitarbeiter").select("*, rollen(*)").eq("ist_aktiv", True).ilike("vorname", parts[0].strip()).ilike("nachname", parts[1].strip()).execute()
 
                             if not res.data:
                                 st.error("Mitarbeiter nicht gefunden oder Konto inaktiv.")

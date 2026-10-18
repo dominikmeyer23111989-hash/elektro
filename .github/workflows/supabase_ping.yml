@@ -1,0 +1,41 @@
+name: Supabase Keep-Alive Ping
+
+on:
+  schedule:
+    # Führt den Ping alle 3 Tage um 03:00 Uhr nachts aus
+    - cron: '0 3 */3 * *'
+  workflow_dispatch: # Ermöglicht auch einen manuellen Test-Klick in GitHub
+
+jobs:
+  ping-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Supabase-Bibliothek installieren
+        run: pip install supabase
+
+      - name: Datenbank-Ping ausführen
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python -c "
+          import os
+          from supabase import create_client
+          
+          url = os.environ.get('SUPABASE_URL')
+          key = os.environ.get('SUPABASE_KEY')
+          
+          if not url or not key:
+              print('Fehler: Supabase Secrets nicht gefunden!')
+              exit(1)
+              
+          supabase = create_client(url, key)
+          # Kleiner Query, um Aktivität zu erzeugen
+          res = supabase.table('mitarbeiter').select('id').limit(1).execute()
+          print('Supabase Ping erfolgreich! Datenbank ist aktiv.')
+          "
